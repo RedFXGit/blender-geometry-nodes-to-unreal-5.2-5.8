@@ -1,0 +1,39 @@
+using UnrealBuildTool;
+
+public class BlenderBridgeRuntime : ModuleRules
+{
+    public BlenderBridgeRuntime(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        CppStandard = CppStandardVersion.Cpp20;
+
+        PublicDependencyModuleNames.AddRange(
+            new[]
+            {
+                "Core",
+                "CoreUObject",
+                "Engine",
+                "StructUtils"
+            }
+        );
+
+        PrivateDependencyModuleNames.AddRange(
+            new[]
+            {
+                "Json",
+                "JsonUtilities",
+                "ProceduralMeshComponent",
+                "Projects"
+            }
+        );
+
+        if (Target.Platform == UnrealTargetPlatform.Win64)
+        {
+            PublicDefinitions.Add("BLENDER_BRIDGE_WITH_WINDOWS_IPC=1");
+        }
+        else
+        {
+            PublicDefinitions.Add("BLENDER_BRIDGE_WITH_WINDOWS_IPC=0");
+        }
+    }
+}
