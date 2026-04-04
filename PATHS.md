@@ -1,11 +1,15 @@
 # Reference Paths
 
-This file captures the relevant paths discovered so far for the Blender-to-Unreal bridge scaffold.
+This file captures the most relevant paths discovered so far for the current Blender-to-Unreal bridge implementation.
 
 ## Workspace
 
 - Workspace root: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge`
 - Plan document: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\PLAN.md`
+- README: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\README.md`
+- Testing guide: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\TESTING.md`
+- This path reference: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\PATHS.md`
+- Repo `.gitignore`: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\.gitignore`
 
 ## Local Scaffold Paths
 
@@ -18,6 +22,34 @@ This file captures the relevant paths discovered so far for the Blender-to-Unrea
 - Editor module root: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor`
 - Editor public headers: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Public`
 - Editor private sources: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private`
+
+## Key Implemented Bridge Files
+
+- Plugin descriptor: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\BlenderBridge.uplugin`
+- Blender worker script: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Scripts\bridge_server.py`
+- Runtime build file: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\BlenderBridgeRuntime.Build.cs`
+- Component header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h`
+- Component source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeComponent.cpp`
+- Source asset header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h`
+- Source asset source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeSource.cpp`
+- Protocol header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeProtocol.h`
+- Protocol source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeProtocol.cpp`
+- Message helpers header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeMessages.h`
+- Message helpers source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeMessages.cpp`
+- Worker session header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeWorkerSession.h`
+- Worker session source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeWorkerSession.cpp`
+- Pipe client header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgePipeClient.h`
+- Pipe client source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgePipeClient.cpp`
+- Shared memory header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSharedMemory.h`
+- Shared memory source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeSharedMemory.cpp`
+
+## Sync And Project Paths
+
+- Sync script: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\scripts\Sync-BlenderBridgeToProject.ps1`
+- Watch-and-sync script: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\scripts\Watch-BlenderBridgeToProject.ps1`
+- Unreal project root used in testing: `C:\Users\Lassiter\Documents\Unreal Projects\blender_unreal`
+- Unreal project plugin copy: `C:\Users\Lassiter\Documents\Unreal Projects\blender_unreal\Plugins\BlenderBridge`
+- Unreal project file: `C:\Users\Lassiter\Documents\Unreal Projects\blender_unreal\blender_unreal.uproject`
 
 ## Unreal Engine Install
 
@@ -32,14 +64,8 @@ This file captures the relevant paths discovered so far for the Blender-to-Unrea
 - Struct utils directory: `C:\Program Files\Epic Games\UE_5.7\Engine\Source\Runtime\CoreUObject\Public\StructUtils`
 - Procedural mesh component header: `C:\Program Files\Epic Games\UE_5.7\Engine\Plugins\Runtime\ProceduralMeshComponent\Source\ProceduralMeshComponent\Public\ProceduralMeshComponent.h`
 
-## Expected Implementation Targets
-
-- Unreal plugin descriptor: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\BlenderBridge.uplugin`
-- Blender worker script target: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Scripts\bridge_server.py`
-- Runtime build file target: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\BlenderBridgeRuntime.Build.cs`
-- Editor build file target: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\BlenderBridgeEditor.Build.cs`
-
 ## Notes
 
 - The Unreal Engine paths above are local-machine discoveries from this session and may differ on another machine.
-- The local scaffold directories already exist but do not contain implementation files yet.
+- `Build\` in the repo is disposable packaging output from Unreal's `BuildPlugin` flow and is not source-of-truth content.
+- The live source-of-truth implementation is the repo plugin under `Plugins\BlenderBridge`; the Unreal project plugin copy is just the synced test target.
