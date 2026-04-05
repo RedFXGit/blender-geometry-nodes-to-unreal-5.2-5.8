@@ -35,9 +35,6 @@ public:
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
     void PushCurrentInputs();
 
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge", meta = (DisplayName = "Dump Input Ordering Debug"))
-    void DumpInputOrderingDebug();
-
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     TObjectPtr<UBlenderBridgeSource> Source;
 
@@ -69,12 +66,6 @@ protected:
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 
-public:
-    int32 GetInputOrderingDebugRequestId() const
-    {
-        return InputOrderingDebugRequestId;
-    }
-
 private:
     void StartBridgeInternal(bool bResetInputValuesFromSchema, bool bRequestCookAfterConnect);
     bool QueueCurrentInputMessages(bool bRequestCook, const TCHAR* ContextMessage);
@@ -101,7 +92,4 @@ private:
     TMap<FName, uint32> RuntimeInputEnumHashes;
     bool bResetInputValuesFromSchemaOnNextRefresh = false;
     bool bRequestCookAfterReconnect = false;
-
-    UPROPERTY(Transient)
-    int32 InputOrderingDebugRequestId = 0;
 };

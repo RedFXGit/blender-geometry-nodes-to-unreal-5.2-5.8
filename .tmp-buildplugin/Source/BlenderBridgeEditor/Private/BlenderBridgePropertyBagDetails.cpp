@@ -1,41 +1,33 @@
 #include "BlenderBridgePropertyBagDetails.h"
 
 #include "BlenderBridgeComponent.h"
-#include "Styling/AppStyle.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
 #include "GameFramework/Actor.h"
 #include "IDetailChildrenBuilder.h"
-#include "InstancedStructDetails.h"
-#include "Misc/Attribute.h"
+#include "IDetailGroup.h"
 #include "PropertyHandle.h"
-#include "Widgets/Images/SImage.h"
-#include "Widgets/Input/SButton.h"
-#include "Widgets/Layout/SBorder.h"
-#include "Widgets/Layout/SBox.h"
-#include "Widgets/SBoxPanel.h"
-#include "Widgets/Text/STextBlock.h"
+#include "StructUtilsMetadata.h"
 
 namespace
 {
-    DEFINE_LOG_CATEGORY_STATIC(LogBlenderBridgeEditor, Log, All);
-
     constexpr TCHAR BlenderBridgeGroupedLayoutMetaKey[] = TEXT("BlenderBridgeGroupedLayout");
-    constexpr float BlenderBridgeGroupIndentWidth = 14.0f;
 
     struct FBridgeOrderingContext
     {
-        const UBlenderBridgeComponent* Component = nullptr;
-        FString ContextLabel;
         TMap<FName, int32> PropertyOrder;
+    };
+
+    struct FBridgePropertyBagDisplaySettings
+    {
+        bool bAllowContainers = true;
+        EPropertyBagChildRowFeatures ChildRowFeatures = EPropertyBagChildRowFeatures::Default;
     };
 
     void InitializeOrderingContextFromComponent(
         FBridgeOrderingContext& Context,
         const UBlenderBridgeComponent* BridgeComponent)
     {
-        Context.Component = BridgeComponent;
-        Context.ContextLabel = BridgeComponent != nullptr ? BridgeComponent->GetPathName() : TEXT("<null-component>");
         Context.PropertyOrder.Reset();
 
         if (BridgeComponent == nullptr)
@@ -48,21 +40,6 @@ namespace
         {
             Context.PropertyOrder.Add(FInstancedPropertyBag::SanitizePropertyName(BridgeComponent->InputSchema[Index].Id), Index);
         }
-    }
-
-    void AppendContextCandidate(FBridgeOrderingContext& Context, const UObject* Candidate)
-    {
-        if (Candidate == nullptr)
-        {
-            return;
-        }
-
-        if (!Context.ContextLabel.IsEmpty())
-        {
-            Context.ContextLabel.Append(TEXT(", "));
-        }
-
-        Context.ContextLabel.Append(FString::Printf(TEXT("%s (%s)"), *Candidate->GetPathName(), *Candidate->GetClass()->GetName()));
     }
 
     const UBlenderBridgeComponent* ResolveBridgeComponentFromCandidate(
@@ -109,7 +86,6 @@ namespace
         IDetailChildrenBuilder& StructBuilder)
     {
         FBridgeOrderingContext Context;
-        Context.ContextLabel = FString::Printf(TEXT("Handle=%s"), *FString(StructPropertyHandle->GetPropertyPath()));
 
         TArray<const void*> RawData;
         StructPropertyHandle->AccessRawData(RawData);
@@ -130,8 +106,6 @@ namespace
                 InitializeOrderingContextFromComponent(Context, BridgeComponent);
                 return Context;
             }
-
-            AppendContextCandidate(Context, CandidateObject);
         }
 
         TArray<UObject*> OuterObjects;
@@ -143,44 +117,59 @@ namespace
                 InitializeOrderingContextFromComponent(Context, BridgeComponent);
                 return Context;
             }
-
-            AppendContextCandidate(Context, OuterObject);
         }
 
         return Context;
     }
 
-    bool AreBridgeCategoriesExpanded(const TMap<FString, bool>& ExpansionState, const TArray<FString>& CategoryKeys)
+    FBridgePropertyBagDisplaySettings BuildPropertyBagDisplaySettings(const TSharedRef<IPropertyHandle>& StructPropertyHandle)
     {
-        for (const FString& CategoryKey : CategoryKeys)
+        FBridgePropertyBagDisplaySettings Settings;
+
+        const FProperty* MetaDataProperty = StructPropertyHandle->GetMetaDataProperty();
+        if (MetaDataProperty == nullptr)
         {
-            if (!ExpansionState.FindRef(CategoryKey))
+            return Settings;
+        }
+
+        const bool bFixedLayout = MetaDataProperty->HasMetaData(UE::StructUtils::Metadata::FixedLayoutName);
+        Settings.bAllowContainers = MetaDataProperty->HasMetaData(UE::StructUtils::Metadata::AllowContainersName)
+            ? MetaDataProperty->GetBoolMetaData(UE::StructUtils::Metadata::AllowContainersName)
+            : true;
+
+        const FString* ChildRowFeaturesString = StructPropertyHandle->GetInstanceMetaData(UE::StructUtils::Metadata::ChildRowFeaturesName);
+        if (ChildRowFeaturesString == nullptr)
+        {
+            ChildRowFeaturesString = MetaDataProperty->FindMetaData(UE::StructUtils::Metadata::ChildRowFeaturesName);
+        }
+
+        if (ChildRowFeaturesString != nullptr)
+        {
+            if (const UEnum* Enum = StaticEnum<EPropertyBagChildRowFeatures>())
             {
-                return false;
+                const int32 EnumIndex = Enum->GetIndexByNameString(*ChildRowFeaturesString);
+                if (EnumIndex != INDEX_NONE)
+                {
+                    Settings.ChildRowFeatures = static_cast<EPropertyBagChildRowFeatures>(Enum->GetValueByIndex(EnumIndex));
+                }
             }
         }
 
-        return true;
-    }
-
-    FString BuildBridgeCategoryString(const TSharedPtr<IPropertyHandle>& PropertyHandle)
-    {
-        if (!PropertyHandle.IsValid())
+        if (bFixedLayout)
         {
-            return TEXT("<invalid>");
+            Settings.ChildRowFeatures = EPropertyBagChildRowFeatures::Fixed;
         }
 
-        const FString CategoryValue = PropertyHandle->GetMetaData(TEXT("Category"));
-        return CategoryValue.IsEmpty() ? TEXT("<none>") : CategoryValue;
+        return Settings;
     }
 
-    class FBlenderBridgeOrderedInstancedStructDetails final : public FInstancedStructDataDetails
+    class FBlenderBridgeOrderedPropertyBagInstanceDetails final : public FPropertyBagInstanceDataDetails
     {
     public:
-        FBlenderBridgeOrderedInstancedStructDetails(
-            const TSharedPtr<IPropertyHandle>& InStructProperty,
+        FBlenderBridgeOrderedPropertyBagInstanceDetails(
+            const FConstructParams& InParams,
             FBridgeOrderingContext InOrderingContext)
-            : FInstancedStructDataDetails(InStructProperty)
+            : FPropertyBagInstanceDataDetails(InParams)
             , OrderingContext(MoveTemp(InOrderingContext))
         {
         }
@@ -226,110 +215,51 @@ namespace
                 return A.OriginalOrder < B.OriginalOrder;
             });
 
-            MaybeLogOrderingDebug(ChildProperties, OrderedChildProperties);
-
-            TSet<FString> AddedCategoryHeaders;
-
+            TArray<TSharedPtr<IPropertyHandle>> SortedChildProperties;
+            SortedChildProperties.Reserve(OrderedChildProperties.Num());
             for (const FOrderedChildProperty& OrderedChild : OrderedChildProperties)
             {
-                const TSharedPtr<IPropertyHandle>& ChildHandle = OrderedChild.Handle;
-                TArray<FString> Categories = GetPropertyCategories(ChildHandle);
-                if (Categories.IsEmpty())
+                SortedChildProperties.Add(OrderedChild.Handle);
+            }
+
+            TMap<FString, IDetailGroup*> CategoryToGroup;
+
+            for (const TSharedPtr<IPropertyHandle>& ChildHandle : SortedChildProperties)
+            {
+                TArray<FString> CategoriesToAdd = GetPropertyCategories(ChildHandle);
+                if (CategoriesToAdd.IsEmpty())
                 {
                     IDetailPropertyRow& Row = ChildBuilder.AddProperty(ChildHandle.ToSharedRef());
                     OnChildRowAdded(Row);
                     continue;
                 }
 
-                TArray<FString> CategoryKeys;
                 FString CompleteCategory;
+                IDetailGroup* CurrentGroup = nullptr;
 
-                for (int32 Index = 0; Index < Categories.Num(); ++Index)
+                for (int32 CategoryIndex = 0; CategoryIndex < CategoriesToAdd.Num(); ++CategoryIndex)
                 {
-                    const FString& Category = Categories[Index];
+                    const FString& CategoryToAdd = CategoriesToAdd[CategoryIndex];
                     CompleteCategory = CompleteCategory.IsEmpty()
-                        ? Category
-                        : FString::Printf(TEXT("%s|%s"), *CompleteCategory, *Category);
-                    CategoryKeys.Add(CompleteCategory);
+                        ? CategoryToAdd
+                        : FString::Printf(TEXT("%s|%s"), *CompleteCategory, *CategoryToAdd);
 
-                    if (AddedCategoryHeaders.Contains(CompleteCategory))
+                    if (IDetailGroup** ExistingGroup = CategoryToGroup.Find(CompleteCategory))
                     {
+                        CurrentGroup = *ExistingGroup;
                         continue;
                     }
 
-                    AddedCategoryHeaders.Add(CompleteCategory);
+                    CurrentGroup = CurrentGroup != nullptr
+                        ? &CurrentGroup->AddGroup(FName(CompleteCategory), FText::FromString(CategoryToAdd))
+                        : &ChildBuilder.AddGroup(FName(CompleteCategory), FText::FromString(CategoryToAdd));
 
-                    TArray<FString> ParentCategoryKeys;
-                    ParentCategoryKeys.Reserve(Index);
-                    for (int32 ParentIndex = 0; ParentIndex < Index; ++ParentIndex)
-                    {
-                        ParentCategoryKeys.Add(CategoryKeys[ParentIndex]);
-                    }
-
-                    FDetailWidgetRow& HeaderRow = ChildBuilder.AddCustomRow(FText::FromString(Category));
-                    HeaderRow.Visibility(TAttribute<EVisibility>::CreateLambda(
-                        [ExpansionState = ExpansionState, ParentCategoryKeys]()
-                        {
-                            return AreBridgeCategoriesExpanded(*ExpansionState, ParentCategoryKeys)
-                                ? EVisibility::Visible
-                                : EVisibility::Collapsed;
-                        }));
-                    HeaderRow.WholeRowContent()
-                    [
-                        SNew(SBox)
-                        .Padding(FMargin(static_cast<float>(Index) * BlenderBridgeGroupIndentWidth, 0.0f, 0.0f, 0.0f))
-                        [
-                            SNew(SBorder)
-                            .BorderImage(FAppStyle::GetBrush("DetailsView.CategoryTop"))
-                            [
-                                SNew(SButton)
-                                .ButtonStyle(FAppStyle::Get(), "NoBorder")
-                                .HAlign(HAlign_Fill)
-                                .VAlign(VAlign_Center)
-                                .ContentPadding(FMargin(4.0f, 2.0f))
-                                .OnClicked_Lambda([ExpansionState = ExpansionState, CompleteCategory]()
-                                {
-                                    ExpansionState->FindOrAdd(CompleteCategory) = !ExpansionState->FindRef(CompleteCategory);
-                                    return FReply::Handled();
-                                })
-                                [
-                                    SNew(SHorizontalBox)
-                                    + SHorizontalBox::Slot()
-                                    .AutoWidth()
-                                    .VAlign(VAlign_Center)
-                                    .Padding(0.0f, 0.0f, 4.0f, 0.0f)
-                                    [
-                                        SNew(SImage)
-                                        .Image_Lambda([ExpansionState = ExpansionState, CompleteCategory]()
-                                        {
-                                            return FAppStyle::GetBrush(
-                                                ExpansionState->FindRef(CompleteCategory)
-                                                    ? "TreeArrow_Expanded"
-                                                    : "TreeArrow_Collapsed");
-                                        })
-                                    ]
-                                    + SHorizontalBox::Slot()
-                                    .FillWidth(1.0f)
-                                    .VAlign(VAlign_Center)
-                                    [
-                                        SNew(STextBlock)
-                                        .Text(FText::FromString(Category))
-                                        .TextStyle(FAppStyle::Get(), "DetailsView.CategoryTextStyle")
-                                    ]
-                                ]
-                            ]
-                        ]
-                    ];
+                    OnGroupRowAdded(*CurrentGroup, CategoryIndex, CategoryToAdd);
+                    CategoryToGroup.Add(CompleteCategory, CurrentGroup);
                 }
 
-                IDetailPropertyRow& Row = ChildBuilder.AddProperty(ChildHandle.ToSharedRef());
-                Row.Visibility(TAttribute<EVisibility>::CreateLambda(
-                    [ExpansionState = ExpansionState, CategoryKeys]()
-                    {
-                        return AreBridgeCategoriesExpanded(*ExpansionState, CategoryKeys)
-                            ? EVisibility::Visible
-                            : EVisibility::Collapsed;
-                    }));
+                check(CurrentGroup != nullptr);
+                IDetailPropertyRow& Row = CurrentGroup->AddPropertyRow(ChildHandle.ToSharedRef());
                 OnChildRowAdded(Row);
             }
         }
@@ -342,71 +272,6 @@ namespace
             int32 OriginalOrder = MAX_int32;
         };
 
-        void MaybeLogOrderingDebug(
-            const TArray<TSharedPtr<IPropertyHandle>>& ChildProperties,
-            const TArray<FOrderedChildProperty>& OrderedChildProperties) const
-        {
-            static TMap<FString, int32> LastLoggedRequestIds;
-
-            const FString ContextKey = OrderingContext.ContextLabel.IsEmpty() ? TEXT("<unknown-context>") : OrderingContext.ContextLabel;
-            const bool bHasResolvedComponent = OrderingContext.Component != nullptr;
-            const int32 RequestId = bHasResolvedComponent ? OrderingContext.Component->GetInputOrderingDebugRequestId() : -1;
-            const int32 PreviousRequestId = LastLoggedRequestIds.FindRef(ContextKey);
-            if ((RequestId > 0 && PreviousRequestId == RequestId) || (RequestId <= 0 && PreviousRequestId == RequestId))
-            {
-                return;
-            }
-
-            LastLoggedRequestIds.Add(ContextKey, RequestId);
-
-            UE_LOG(LogBlenderBridgeEditor, Log, TEXT("---- Blender Bridge Details Ordering Debug [%s] ----"), *ContextKey);
-            UE_LOG(
-                LogBlenderBridgeEditor,
-                Log,
-                TEXT("Build: %s"),
-                OrderingContext.Component != nullptr ? *OrderingContext.Component->BridgeBuildVersion : TEXT("<unknown>"));
-            UE_LOG(LogBlenderBridgeEditor, Log, TEXT("Resolved component: %s"), OrderingContext.Component != nullptr ? TEXT("yes") : TEXT("no"));
-            UE_LOG(LogBlenderBridgeEditor, Log, TEXT("Raw child-handle count: %d"), ChildProperties.Num());
-
-            for (int32 Index = 0; Index < ChildProperties.Num(); ++Index)
-            {
-                const TSharedPtr<IPropertyHandle>& ChildHandle = ChildProperties[Index];
-                const FProperty* ChildProperty = ChildHandle.IsValid() ? ChildHandle->GetProperty() : nullptr;
-                const int32* ExistingOrder = ChildProperty != nullptr ? OrderingContext.PropertyOrder.Find(ChildProperty->GetFName()) : nullptr;
-                UE_LOG(
-                    LogBlenderBridgeEditor,
-                    Log,
-                    TEXT("Raw[%02d] property=%s display=\"%s\" category=\"%s\" schema_order=%s path=%s"),
-                    Index,
-                    ChildProperty != nullptr ? *ChildProperty->GetFName().ToString() : TEXT("<invalid>"),
-                    ChildHandle.IsValid() ? *ChildHandle->GetPropertyDisplayName().ToString() : TEXT("<invalid>"),
-                    *BuildBridgeCategoryString(ChildHandle),
-                    ExistingOrder != nullptr ? *FString::FromInt(*ExistingOrder) : TEXT("<none>"),
-                    ChildHandle.IsValid() ? *FString(ChildHandle->GetPropertyPath()) : TEXT("<invalid>"));
-            }
-
-            UE_LOG(LogBlenderBridgeEditor, Log, TEXT("Final sorted child order: %d"), OrderedChildProperties.Num());
-
-            for (int32 Index = 0; Index < OrderedChildProperties.Num(); ++Index)
-            {
-                const FOrderedChildProperty& OrderedChild = OrderedChildProperties[Index];
-                const TSharedPtr<IPropertyHandle>& ChildHandle = OrderedChild.Handle;
-                const FProperty* ChildProperty = ChildHandle.IsValid() ? ChildHandle->GetProperty() : nullptr;
-
-                UE_LOG(
-                    LogBlenderBridgeEditor,
-                    Log,
-                    TEXT("Sorted[%02d] property=%s display=\"%s\" category=\"%s\" schema_order=%d original_order=%d"),
-                    Index,
-                    ChildProperty != nullptr ? *ChildProperty->GetFName().ToString() : TEXT("<invalid>"),
-                    ChildHandle.IsValid() ? *ChildHandle->GetPropertyDisplayName().ToString() : TEXT("<invalid>"),
-                    *BuildBridgeCategoryString(ChildHandle),
-                    OrderedChild.SchemaOrder,
-                    OrderedChild.OriginalOrder);
-            }
-        }
-
-        TSharedRef<TMap<FString, bool>> ExpansionState = MakeShared<TMap<FString, bool>>();
         FBridgeOrderingContext OrderingContext;
     };
 }
@@ -435,24 +300,18 @@ void FBlenderBridgePropertyBagDetails::CustomizeChildren(
         return;
     }
 
-    const TSharedPtr<IPropertyHandle> ValueProperty = StructPropertyHandle->GetChildHandle(TEXT("Value"), false);
-    if (!ValueProperty.IsValid() || !ValueProperty->IsValidHandle())
-    {
-        FPropertyBagDetails::CustomizeChildren(StructPropertyHandle, StructBuilder, StructCustomizationUtils);
-        return;
-    }
-
+    const FBridgePropertyBagDisplaySettings DisplaySettings = BuildPropertyBagDisplaySettings(StructPropertyHandle);
     const FBridgeOrderingContext OrderingContext = BuildBridgeOrderingContext(StructPropertyHandle, StructBuilder);
-    UE_LOG(
-        LogBlenderBridgeEditor,
-        Log,
-        TEXT("CustomizeChildren grouped layout. component_resolved=%s context=\"%s\" property_path=%s"),
-        OrderingContext.Component != nullptr ? TEXT("yes") : TEXT("no"),
-        *OrderingContext.ContextLabel,
-        *FString(StructPropertyHandle->GetPropertyPath()));
+    FPropertyBagInstanceDataDetails::FConstructParams Params
+    {
+        .BagStructProperty = StructPropertyHandle,
+        .PropUtils = StructCustomizationUtils.GetPropertyUtilities(),
+        .bAllowContainers = DisplaySettings.bAllowContainers,
+        .ChildRowFeatures = DisplaySettings.ChildRowFeatures
+    };
 
-    StructBuilder.AddCustomBuilder(MakeShared<FBlenderBridgeOrderedInstancedStructDetails>(
-        ValueProperty,
+    StructBuilder.AddCustomBuilder(MakeShared<FBlenderBridgeOrderedPropertyBagInstanceDetails>(
+        Params,
         OrderingContext));
 }
 

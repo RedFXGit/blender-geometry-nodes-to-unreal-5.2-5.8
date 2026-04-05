@@ -28,44 +28,6 @@ PROCEDURALMESHCOMPONENT_API UClass* Z_Construct_UClass_UProceduralMeshComponent_
 UPackage* Z_Construct_UPackage__Script_BlenderBridgeRuntime();
 // ********** End Cross Module References **********************************************************
 
-// ********** Begin Class UBlenderBridgeComponent Function DumpInputOrderingDebug ******************
-struct Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug_Statics
-{
-#if WITH_METADATA
-	static constexpr UECodeGen_Private::FMetaDataPairParam Function_MetaDataParams[] = {
-		{ "CallInEditor", "true" },
-		{ "Category", "Blender Bridge" },
-		{ "DisplayName", "Dump Input Ordering Debug" },
-		{ "ModuleRelativePath", "Public/BlenderBridgeComponent.h" },
-	};
-#endif // WITH_METADATA
-
-// ********** Begin Function DumpInputOrderingDebug constinit property declarations ****************
-// ********** End Function DumpInputOrderingDebug constinit property declarations ******************
-	static const UECodeGen_Private::FFunctionParams FuncParams;
-};
-const UECodeGen_Private::FFunctionParams Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug_Statics::FuncParams = { { (UObject*(*)())Z_Construct_UClass_UBlenderBridgeComponent, nullptr, "DumpInputOrderingDebug", 	nullptr, 
-	0, 
-0,
-RF_Public|RF_Transient|RF_MarkAsNative, (EFunctionFlags)0x04020401, 0, 0, METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug_Statics::Function_MetaDataParams), Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug_Statics::Function_MetaDataParams)},  };
-UFunction* Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug()
-{
-	static UFunction* ReturnFunction = nullptr;
-	if (!ReturnFunction)
-	{
-		UECodeGen_Private::ConstructUFunction(&ReturnFunction, Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug_Statics::FuncParams);
-	}
-	return ReturnFunction;
-}
-DEFINE_FUNCTION(UBlenderBridgeComponent::execDumpInputOrderingDebug)
-{
-	P_FINISH;
-	P_NATIVE_BEGIN;
-	P_THIS->DumpInputOrderingDebug();
-	P_NATIVE_END;
-}
-// ********** End Class UBlenderBridgeComponent Function DumpInputOrderingDebug ********************
-
 // ********** Begin Class UBlenderBridgeComponent Function PushCurrentInputs ***********************
 struct Z_Construct_UFunction_UBlenderBridgeComponent_PushCurrentInputs_Statics
 {
@@ -335,9 +297,6 @@ struct Z_Construct_UClass_UBlenderBridgeComponent_Statics
 	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_RuntimeInputEnums_MetaData[] = {
 		{ "ModuleRelativePath", "Public/BlenderBridgeComponent.h" },
 	};
-	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_InputOrderingDebugRequestId_MetaData[] = {
-		{ "ModuleRelativePath", "Public/BlenderBridgeComponent.h" },
-	};
 #endif // WITH_METADATA
 
 // ********** Begin Class UBlenderBridgeComponent constinit property declarations ******************
@@ -355,11 +314,9 @@ struct Z_Construct_UClass_UBlenderBridgeComponent_Statics
 	static const UECodeGen_Private::FObjectPropertyParams NewProp_RuntimeInputEnums_ValueProp;
 	static const UECodeGen_Private::FNamePropertyParams NewProp_RuntimeInputEnums_Key_KeyProp;
 	static const UECodeGen_Private::FMapPropertyParams NewProp_RuntimeInputEnums;
-	static const UECodeGen_Private::FIntPropertyParams NewProp_InputOrderingDebugRequestId;
 	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
 // ********** End Class UBlenderBridgeComponent constinit property declarations ********************
 	static constexpr UE::CodeGen::FClassNativeFunction Funcs[] = {
-		{ .NameUTF8 = UTF8TEXT("DumpInputOrderingDebug"), .Pointer = &UBlenderBridgeComponent::execDumpInputOrderingDebug },
 		{ .NameUTF8 = UTF8TEXT("PushCurrentInputs"), .Pointer = &UBlenderBridgeComponent::execPushCurrentInputs },
 		{ .NameUTF8 = UTF8TEXT("RefreshInputSchema"), .Pointer = &UBlenderBridgeComponent::execRefreshInputSchema },
 		{ .NameUTF8 = UTF8TEXT("RequestCook"), .Pointer = &UBlenderBridgeComponent::execRequestCook },
@@ -368,7 +325,6 @@ struct Z_Construct_UClass_UBlenderBridgeComponent_Statics
 	};
 	static UObject* (*const DependentSingletons[])();
 	static constexpr FClassFunctionLinkInfo FuncInfo[] = {
-		{ &Z_Construct_UFunction_UBlenderBridgeComponent_DumpInputOrderingDebug, "DumpInputOrderingDebug" }, // 2590989479
 		{ &Z_Construct_UFunction_UBlenderBridgeComponent_PushCurrentInputs, "PushCurrentInputs" }, // 449137774
 		{ &Z_Construct_UFunction_UBlenderBridgeComponent_RefreshInputSchema, "RefreshInputSchema" }, // 892428668
 		{ &Z_Construct_UFunction_UBlenderBridgeComponent_RequestCook, "RequestCook" }, // 2731516328
@@ -397,7 +353,6 @@ const UECodeGen_Private::FObjectPropertyParams Z_Construct_UClass_UBlenderBridge
 const UECodeGen_Private::FObjectPropertyParams Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_RuntimeInputEnums_ValueProp = { "RuntimeInputEnums", nullptr, (EPropertyFlags)0x0104000000000000, UECodeGen_Private::EPropertyGenFlags::Object | UECodeGen_Private::EPropertyGenFlags::ObjectPtr, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 1, Z_Construct_UClass_UUserDefinedEnum_NoRegister, METADATA_PARAMS(0, nullptr) };
 const UECodeGen_Private::FNamePropertyParams Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_RuntimeInputEnums_Key_KeyProp = { "RuntimeInputEnums_Key", nullptr, (EPropertyFlags)0x0100000000000000, UECodeGen_Private::EPropertyGenFlags::Name, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, 0, METADATA_PARAMS(0, nullptr) };
 const UECodeGen_Private::FMapPropertyParams Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_RuntimeInputEnums = { "RuntimeInputEnums", nullptr, (EPropertyFlags)0x0144000000002000, UECodeGen_Private::EPropertyGenFlags::Map, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UBlenderBridgeComponent, RuntimeInputEnums), EMapPropertyFlags::None, METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_RuntimeInputEnums_MetaData), NewProp_RuntimeInputEnums_MetaData) };
-const UECodeGen_Private::FIntPropertyParams Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_InputOrderingDebugRequestId = { "InputOrderingDebugRequestId", nullptr, (EPropertyFlags)0x0040000000002000, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(UBlenderBridgeComponent, InputOrderingDebugRequestId), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_InputOrderingDebugRequestId_MetaData), NewProp_InputOrderingDebugRequestId_MetaData) };
 const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_UBlenderBridgeComponent_Statics::PropPointers[] = {
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_Source,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_BlenderExecutablePath,
@@ -413,7 +368,6 @@ const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UClass_UBlenderB
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_RuntimeInputEnums_ValueProp,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_RuntimeInputEnums_Key_KeyProp,
 	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_RuntimeInputEnums,
-	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UClass_UBlenderBridgeComponent_Statics::NewProp_InputOrderingDebugRequestId,
 };
 static_assert(UE_ARRAY_COUNT(Z_Construct_UClass_UBlenderBridgeComponent_Statics::PropPointers) < 2048);
 // ********** End Class UBlenderBridgeComponent Property Definitions *******************************
@@ -458,10 +412,10 @@ UBlenderBridgeComponent::~UBlenderBridgeComponent() {}
 struct Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_UBlenderBridgeComponent, UBlenderBridgeComponent::StaticClass, TEXT("UBlenderBridgeComponent"), &Z_Registration_Info_UClass_UBlenderBridgeComponent, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UBlenderBridgeComponent), 3331382423U) },
+		{ Z_Construct_UClass_UBlenderBridgeComponent, UBlenderBridgeComponent::StaticClass, TEXT("UBlenderBridgeComponent"), &Z_Registration_Info_UClass_UBlenderBridgeComponent, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UBlenderBridgeComponent), 2844541603U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_3519961614{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_2900360941{
 	TEXT("/Script/BlenderBridgeRuntime"),
 	Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics::ClassInfo),
 	nullptr, 0,

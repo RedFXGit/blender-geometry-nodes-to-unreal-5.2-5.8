@@ -18,7 +18,6 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
 // ********** Begin Class UBlenderBridgeComponent **************************************************
 #define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_RPC_WRAPPERS_NO_PURE_DECLS \
-	DECLARE_FUNCTION(execDumpInputOrderingDebug); \
 	DECLARE_FUNCTION(execPushCurrentInputs); \
 	DECLARE_FUNCTION(execRequestCook); \
 	DECLARE_FUNCTION(execRefreshInputSchema); \
