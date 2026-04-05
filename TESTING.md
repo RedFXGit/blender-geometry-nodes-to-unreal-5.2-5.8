@@ -2,7 +2,6 @@
 
 This bridge is testable today as a manual smoke test. The current slice covers:
 
-- the original hello-world triangle path
 - a real `.blend` object path
 - merged multi-object scene preview
 - Geometry Nodes schema reflection and recook for supported socket types
@@ -11,18 +10,16 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 
 - Unreal can host the plugin runtime module.
 - Unreal can launch Blender headless as a worker process.
-- The Blender worker can expose one reflected input called `seed` in hello-world mode.
-- The worker can write a simple triangle into shared memory.
 - The worker can open a real `.blend`, evaluate one target object or all mesh-compatible scene objects, triangulate them, and stream that mesh into Unreal.
-- The worker can reflect float, int, bool, vector3, color, and string inputs from one Geometry Nodes modifier in real-mesh mode.
+- The worker can reflect float, int, bool, vector3, color, string, and enum inputs from one Geometry Nodes modifier in real-mesh mode.
 - The worker can apply supported Geometry Nodes values and recook the preview mesh.
 - Unreal can read the shared-memory slot and render the result with `UProceduralMeshComponent`.
+- Unreal can import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset.
+- Unreal can restart the worker with a larger shared-memory budget when a cook exceeds the current slot size.
 
 ## What Is Not Yet Testable As A Finished System
 
-- Geometry Nodes input reflection beyond float, int, bool, vector3, color, and string sockets.
-- Enum-driven GN UX.
-- Shared-memory resize/remap recovery.
+- In-place shared-memory remap without worker restart.
 - Editor customization polish.
 - Packaged runtime behavior.
 - Automated end-to-end tests.
@@ -43,16 +40,12 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 5. Create an empty actor in a level.
 6. Add `BlenderBridgeComponent` to that actor.
 7. Set `Blender Executable Path` on the component to `C:\Program Files\Blender Foundation\Blender 4.4\blender.exe`.
-8. For hello world, leave `Source` empty or create a `BlenderBridgeSource` asset with `Hello World Mode` enabled.
-9. For a real mesh test, create a `BlenderBridgeSource` asset with `Hello World Mode` disabled, set `Blend File`, and optionally set `Object Name`.
-   Leave `Object Name` blank to merge all mesh-compatible scene objects.
-   Set `Modifier Name` if you want to reflect inputs from a specific Geometry Nodes modifier.
+8. Drag a `.blend` file into the Content Browser and confirm Unreal creates a `BlenderBridgeSource` asset for it.
+9. Assign that source asset to the component.
 10. Click `Start Bridge` on the component.
 11. Wait for `Bridge ready...`.
 12. Click `Request Cook`.
-13. In hello-world mode, a triangle should appear.
-14. In real-mesh mode, the chosen Blender object or merged scene should appear as a triangulated preview mesh.
-15. In hello-world mode, change `Input Values.seed` and trigger another cook. The triangle size should change.
+13. Confirm the visible Blender mesh content appears as a triangulated preview mesh.
 
 ## Recommended Geometry Nodes Test
 
@@ -72,13 +65,11 @@ In Blender:
 In Unreal:
 
 1. Point your `BlenderBridgeSource` at that `.blend`.
-2. Set `Object Name` to the owning object.
-3. Set `Modifier Name` to the GN modifier name if needed.
-4. Start the bridge and wait for `Bridge ready...`.
-5. Confirm the reflected schema contains the vector input.
-6. Change `X`, `Y`, or `Z` in `Input Values`.
-7. Click `Request Cook`.
-8. Confirm the preview mesh moves.
+2. Start the bridge and wait for `Bridge ready...`.
+3. Confirm the reflected schema contains the vector input.
+4. Change `X`, `Y`, or `Z` in `Input Values`.
+5. Click `Request Cook`.
+6. Confirm the preview mesh moves.
 
 ## Additional GN Type Checks
 
@@ -89,25 +80,28 @@ These are useful follow-up checks after the vector test:
 - `bool`: switch a branch in the graph and confirm a visible mesh change.
 - `color`: confirm the schema appears and cooks succeed; visible output depends on the graph.
 - `string`: confirm the schema appears and cooks succeed; visible output depends on the graph.
+- `enum`: create a menu input, confirm Unreal presents a constrained selection, change it, and confirm the graph responds.
 
 ## Expected Success Signals
 
 - `Connection State` moves to `Connected`.
 - `Last Status Message` shows messages like `Bridge ready...` and `Applied bridge mesh from slot 1`.
-- In hello-world mode, `Input Schema` populates with one entry named `seed`.
-- In real-mesh mode with one resolvable Geometry Nodes modifier, `Input Schema` populates with supported float, int, bool, vector3, color, and string inputs.
-- A visible triangle, a specific Blender object, or a merged scene mesh appears in the level after `Request Cook`.
+- Importing a `.blend` into the Content Browser creates a `BlenderBridgeSource` with `Blend File` already populated.
+- In real-mesh mode with one resolvable Geometry Nodes modifier, `Input Schema` populates with supported float, int, bool, vector3, color, string, and enum inputs.
+- A visible Blender object or merged scene mesh appears in the level after `Request Cook`.
 - Changing a supported GN input and requesting another cook changes the preview mesh when the graph uses that input visibly.
+- Inputs that are grouped into Blender interface panels appear grouped the same way in Unreal details.
+- If the mesh exceeds the current slot size, the bridge logs the resize, reconnects automatically, and retries the cook.
 
 ## Likely Failure Points
 
 - No Unreal host project: this repo currently contains a plugin, not a full `.uproject`.
 - Blender path not set: `blender.exe` was not found on `PATH` during local inspection.
 - Blender Python missing NumPy: the worker expects NumPy inside Blender's Python environment.
-- Real-mesh source missing `Blend File`: the component will reject startup when hello world mode is disabled and no blend path is set.
-- Real-mesh source object or modifier name is wrong: the Blender worker will error if it cannot find the requested target.
+- Source missing `Blend File`: the component will reject startup.
+- Multiple Geometry Nodes candidates: the worker will auto-select a candidate and log what it chose, which may not match your intent in an ambiguous file.
 - C++ changes require a UE rebuild; Blender worker script changes only require restarting the bridge session.
 
 ## If You Want A Lower-Friction Next Step
 
-The most useful next improvement would be enum support, resize/remap handling, and more robust Geometry Nodes scene/output handling.
+The most useful next improvement would be less disruptive shared-memory remap without a worker restart and broader support for non-mesh Geometry Nodes data types like collection-driven inputs.

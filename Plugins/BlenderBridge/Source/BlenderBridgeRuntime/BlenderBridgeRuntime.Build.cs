@@ -1,3 +1,4 @@
+using System;
 using UnrealBuildTool;
 
 public class BlenderBridgeRuntime : ModuleRules
@@ -6,6 +7,9 @@ public class BlenderBridgeRuntime : ModuleRules
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         CppStandard = CppStandardVersion.Cpp20;
+
+        string buildVersion = $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC | {Target.Name} {Target.Platform} {Target.Configuration}";
+        PublicDefinitions.Add($"BLENDER_BRIDGE_BUILD_VERSION=TEXT(\"{EscapeDefinitionString(buildVersion)}\")");
 
         PublicDependencyModuleNames.AddRange(
             new[]
@@ -35,5 +39,10 @@ public class BlenderBridgeRuntime : ModuleRules
         {
             PublicDefinitions.Add("BLENDER_BRIDGE_WITH_WINDOWS_IPC=0");
         }
+    }
+
+    private static string EscapeDefinitionString(string value)
+    {
+        return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
     }
 }

@@ -23,7 +23,23 @@ enum class EBlenderBridgeInputType : uint8
     Vector3,
     Color,
     String,
+    Enum,
     Unsupported
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeEnumOption
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString Id;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString Label;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 Value = 0;
 };
 
 USTRUCT(BlueprintType)
@@ -36,6 +52,12 @@ struct FBridgeInputSchema
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
     FString Label;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString CategoryPath;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString Description;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
     EBlenderBridgeInputType Type = EBlenderBridgeInputType::Unsupported;
@@ -60,6 +82,12 @@ struct FBridgeInputSchema
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
     FString DefaultStringValue;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 DefaultEnumValue = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    TArray<FBridgeEnumOption> EnumOptions;
 };
 
 struct FBridgeDecodedMesh

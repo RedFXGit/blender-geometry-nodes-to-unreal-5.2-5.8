@@ -1,0 +1,13 @@
+{
+	"OutputFiles": [
+		"Module.BlenderBridgeRuntime.cpp.obj",
+		"BlenderBridgeComponent.cpp.obj",
+		"BlenderBridgeMessages.cpp.obj",
+		"BlenderBridgePipeClient.cpp.obj",
+		"BlenderBridgeProtocol.cpp.obj",
+		"BlenderBridgeRuntimeModule.cpp.obj",
+		"BlenderBridgeSharedMemory.cpp.obj",
+		"BlenderBridgeSource.cpp.obj",
+		"BlenderBridgeWorkerSession.cpp.obj"
+	]
+}

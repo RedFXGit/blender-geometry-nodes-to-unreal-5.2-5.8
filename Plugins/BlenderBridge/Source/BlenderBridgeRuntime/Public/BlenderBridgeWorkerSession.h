@@ -11,10 +11,7 @@ struct FBlenderBridgeWorkerConfig
     FString BlenderExecutablePath;
     FString WorkerScriptPath;
     FString BlendFilePath;
-    FString ObjectName;
-    FString ModifierName;
     uint64 SharedMemoryBytes = BlenderBridge::DefaultSharedMemoryBytes;
-    bool bHelloWorldMode = true;
 };
 
 struct FBlenderBridgePendingMessage
@@ -29,6 +26,7 @@ public:
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnStateChanged, EBlenderBridgeConnectionState);
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnSchemaReceived, const TArray<FBridgeInputSchema>&);
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnCookComplete, uint32);
+    DECLARE_MULTICAST_DELEGATE_OneParam(FOnResizeRequired, uint64);
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnLogMessage, const FString&);
 
     ~FBlenderBridgeWorkerSession();
@@ -50,6 +48,7 @@ public:
     FOnStateChanged OnStateChanged;
     FOnSchemaReceived OnSchemaReceived;
     FOnCookComplete OnCookComplete;
+    FOnResizeRequired OnResizeRequired;
     FOnLogMessage OnLogMessage;
 
 private:

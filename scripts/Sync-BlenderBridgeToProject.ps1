@@ -21,6 +21,48 @@ Write-Host "Syncing BlenderBridge plugin..."
 Write-Host "Source: $sourceResolved"
 Write-Host "Target: $targetResolved"
 
+$generatedDirectories = @(
+    "Binaries",
+    "Intermediate",
+    ".vs",
+    "__pycache__"
+)
+
+Write-Host "Clearing generated plugin artifacts from target..."
+foreach ($directoryName in $generatedDirectories) {
+    $generatedPath = Join-Path $targetResolved $directoryName
+    if (-not (Test-Path -LiteralPath $generatedPath)) {
+        continue
+    }
+
+    if ($DryRun) {
+        Write-Host "[DryRun] Would remove directory: $generatedPath"
+        continue
+    }
+
+    try {
+        Remove-Item -LiteralPath $generatedPath -Recurse -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Could not remove generated directory '$generatedPath'. Continuing sync. $($_.Exception.Message)"
+    }
+}
+
+$pycFiles = Get-ChildItem -LiteralPath $targetResolved -Recurse -File -Filter "*.pyc" -ErrorAction SilentlyContinue
+foreach ($pycFile in $pycFiles) {
+    if ($DryRun) {
+        Write-Host "[DryRun] Would remove file: $($pycFile.FullName)"
+        continue
+    }
+
+    try {
+        Remove-Item -LiteralPath $pycFile.FullName -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Could not remove generated file '$($pycFile.FullName)'. Continuing sync. $($_.Exception.Message)"
+    }
+}
+
 $robocopyArgs = @(
     $sourceResolved,
     $targetResolved,

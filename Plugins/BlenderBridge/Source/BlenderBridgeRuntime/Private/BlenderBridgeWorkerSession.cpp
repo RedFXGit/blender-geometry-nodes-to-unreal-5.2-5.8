@@ -322,6 +322,29 @@ void FBlenderBridgeWorkerSession::HandleMessageOnGameThread(const FBlenderBridge
         TArray<FBridgeInputSchema> Schema;
         if (BlenderBridge::ParseInputSchema(Message.Payload, Schema))
         {
+            FString ResolvedObjectName;
+            FString ResolvedModifierName;
+            FString ResolutionNote;
+            if (Message.Payload.IsValid())
+            {
+                Message.Payload->TryGetStringField(TEXT("object_name"), ResolvedObjectName);
+                Message.Payload->TryGetStringField(TEXT("modifier_name"), ResolvedModifierName);
+                Message.Payload->TryGetStringField(TEXT("resolution_note"), ResolutionNote);
+            }
+
+            if (!ResolvedObjectName.IsEmpty())
+            {
+                EmitLog(FString::Printf(TEXT("Auto-resolved Geometry Nodes object: %s"), *ResolvedObjectName));
+            }
+            if (!ResolvedModifierName.IsEmpty())
+            {
+                EmitLog(FString::Printf(TEXT("Auto-resolved Geometry Nodes modifier: %s"), *ResolvedModifierName));
+            }
+            if (!ResolutionNote.IsEmpty())
+            {
+                EmitLog(ResolutionNote);
+            }
+
             SetState(EBlenderBridgeConnectionState::Connected);
             OnSchemaReceived.Broadcast(Schema);
         }
@@ -350,8 +373,20 @@ void FBlenderBridgeWorkerSession::HandleMessageOnGameThread(const FBlenderBridge
     }
 
     case EBlenderBridgeMessageType::ResizeRequired:
-        EmitLog(TEXT("ResizeRequired received. The hello-world slice does not remap yet."));
+    {
+        double RequiredBytes = 0.0;
+        if (Message.Payload.IsValid() && Message.Payload->TryGetNumberField(TEXT("required_bytes"), RequiredBytes))
+        {
+            const uint64 RequiredSlotBytes = static_cast<uint64>(FMath::Max(RequiredBytes, 0.0));
+            EmitLog(FString::Printf(TEXT("ResizeRequired received. Worker requested %llu bytes per shared-memory slot."), RequiredSlotBytes));
+            OnResizeRequired.Broadcast(RequiredSlotBytes);
+        }
+        else
+        {
+            EmitLog(TEXT("ResizeRequired received without required_bytes payload."));
+        }
         break;
+    }
 
     case EBlenderBridgeMessageType::Error:
     {
@@ -426,9 +461,6 @@ void FBlenderBridgeWorkerSession::QueueStartupMessages()
 
     TSharedRef<FJsonObject> LoadPayload = MakeShared<FJsonObject>();
     LoadPayload->SetStringField(TEXT("blend_file"), Config.BlendFilePath);
-    LoadPayload->SetStringField(TEXT("object_name"), Config.ObjectName);
-    LoadPayload->SetStringField(TEXT("modifier_name"), Config.ModifierName);
-    LoadPayload->SetBoolField(TEXT("hello_world"), Config.bHelloWorldMode);
 
     FString SerializedLoad;
     if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::LoadAsset, LoadPayload, SerializedLoad))
@@ -457,11 +489,8 @@ void FBlenderBridgeWorkerSession::QueueStartupMessages()
 
     EmitLog(
         FString::Printf(
-            TEXT("Received worker hello. Queueing startup messages for %s mode. Blend='%s' Object='%s' Modifier='%s'"),
-            Config.bHelloWorldMode ? TEXT("hello-world") : TEXT("real-mesh"),
-            *Config.BlendFilePath,
-            *Config.ObjectName,
-            *Config.ModifierName));
+            TEXT("Received worker hello. Queueing startup messages for Blend='%s'."),
+            *Config.BlendFilePath));
     SendSerializedMessagesAsync(MoveTemp(PendingMessages));
 }
 
@@ -540,7 +569,7 @@ FString FBlenderBridgeWorkerSession::MakeSharedMemoryName() const
 FString FBlenderBridgeWorkerSession::BuildBlenderArguments() const
 {
     TArray<FString> Tokens;
-    Tokens.Reserve(18);
+    Tokens.Reserve(12);
 
     Tokens.Add(TEXT("--background"));
     Tokens.Add(TEXT("--python"));
@@ -553,27 +582,10 @@ FString FBlenderBridgeWorkerSession::BuildBlenderArguments() const
     Tokens.Add(TEXT("--shared-memory-bytes"));
     Tokens.Add(LexToString(Config.SharedMemoryBytes));
 
-    if (Config.bHelloWorldMode)
-    {
-        Tokens.Add(TEXT("--hello-world"));
-    }
-
     if (!Config.BlendFilePath.IsEmpty())
     {
         Tokens.Add(TEXT("--blend-file"));
         Tokens.Add(FString::Printf(TEXT("\"%s\""), *Config.BlendFilePath));
-    }
-
-    if (!Config.ObjectName.IsEmpty())
-    {
-        Tokens.Add(TEXT("--object-name"));
-        Tokens.Add(FString::Printf(TEXT("\"%s\""), *Config.ObjectName));
-    }
-
-    if (!Config.ModifierName.IsEmpty())
-    {
-        Tokens.Add(TEXT("--modifier-name"));
-        Tokens.Add(FString::Printf(TEXT("\"%s\""), *Config.ModifierName));
     }
 
     return FString::Join(Tokens, TEXT(" "));

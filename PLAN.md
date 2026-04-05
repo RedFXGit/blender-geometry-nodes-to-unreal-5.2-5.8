@@ -10,9 +10,11 @@ The bridge currently does all of the following:
 - Unreal and Blender communicate over a Windows named pipe.
 - Mesh payloads move through double-buffered named shared memory.
 - Unreal reads the cooked mesh and displays it with `UProceduralMeshComponent`.
+- Unreal can grow the shared-memory budget automatically and restart the worker when a cook exceeds the current slot size.
 - A `BlenderBridgeSource` asset can point at a real `.blend` file.
-- The worker can cook one named object or merge all mesh-compatible scene objects.
-- One resolvable Geometry Nodes modifier can expose and accept `float`, `int`, `bool`, `vector3`, `color`, and `string` inputs.
+- Unreal can import a `.blend` into a configured `BlenderBridgeSource` asset.
+- The worker can cook visible mesh-compatible scene objects from the opened `.blend`.
+- One resolvable Geometry Nodes modifier can expose and accept `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum` inputs.
 
 This is still a min-copy bridge, not a true zero-copy renderer. That is expected and acceptable for the current phase.
 
@@ -24,12 +26,13 @@ This is still a min-copy bridge, not a true zero-copy renderer. That is expected
 - Double-buffered shared-memory mesh contract.
 - Unreal-owned Blender worker launch and shutdown.
 - Async startup, message sending, and stop flow to avoid editor hangs.
-- Hello-world triangle mode.
 - Real `.blend` loading and evaluated mesh extraction.
 - Triangulated render-vertex packing with UV and normal support.
 - Basic Blender-to-Unreal coordinate conversion and world-transform application.
-- Multi-object merge when `Object Name` is blank.
+- Scene-driven auto target resolution from the source `.blend`.
 - `BlenderBridgeSource` asset workflow.
+- `.blend` Content Browser import that auto-creates `BlenderBridgeSource`.
+- Automatic shared-memory growth by restarting the worker with a larger buffer when needed.
 - GN input reflection and round-trip updates for:
   - `float`
   - `int`
@@ -37,6 +40,7 @@ This is still a min-copy bridge, not a true zero-copy renderer. That is expected
   - `vector3`
   - `color`
   - `string`
+  - `enum`
 - Sync scripts for mirroring the plugin into a separate Unreal project.
 
 ### Working Baseline
@@ -48,12 +52,11 @@ This is still a min-copy bridge, not a true zero-copy renderer. That is expected
 
 ### Not Yet Implemented
 
-- Shared-memory resize/remap recovery.
-- Geometry Nodes enum support.
+- In-place shared-memory remap without worker restart.
 - Material-slot streaming.
 - Collision generation.
 - Geometry Nodes instance-aware scene output beyond realized merged mesh behavior.
-- Custom editor module and richer UI customization.
+- Richer editor customization beyond the current `.blend` import workflow.
 - Custom render proxy / RDG upload path.
 - Packaged runtime support.
 - Automated end-to-end tests.
@@ -88,8 +91,8 @@ Responsibilities:
 
 - Open the named pipe server and shared memory mapping.
 - Load the requested `.blend`.
-- Resolve the target object or mergeable object set.
-- Resolve one Geometry Nodes modifier for schema reflection when possible.
+- Resolve the visible mesh-compatible object set.
+- Auto-resolve one Geometry Nodes modifier for schema reflection when possible.
 - Apply incoming modifier values.
 - Evaluate objects, triangulate them, and pack render vertices.
 - Write the inactive shared-memory slot and publish `CookComplete`.
@@ -110,13 +113,12 @@ The current workflow that has already been exercised looks like this:
 10. Click `Request Cook`.
 11. Confirm the preview mesh updates in the viewport.
 
-This flow now works for both the hello-world path and the real-mesh Geometry Nodes path.
+This flow now works for the blend-file-driven Geometry Nodes path without manual object or modifier naming in the source asset.
 
 ## Recommended Next Milestones
 
 ### Next
 
-- Add enum support for GN sockets where Unreal can present safe editable values.
 - Add better modifier-resolution diagnostics when multiple GN modifiers exist.
 - Add optional scene/output modes:
   - one named object
@@ -141,11 +143,11 @@ This flow now works for both the hello-world path and the real-mesh Geometry Nod
 
 The highest-value tests for the next phase are:
 
-- GN schema reflection for mixed socket types.
+- GN schema reflection for mixed socket types, including enums.
 - Repeated cook stability while editing values rapidly.
 - Multi-object merge correctness.
 - Large mesh behavior once resize/remap exists.
-- Modifier-resolution correctness when `Modifier Name` is provided versus blank.
+- Modifier auto-resolution correctness when a `.blend` contains multiple GN candidates.
 
 ## Assumptions
 

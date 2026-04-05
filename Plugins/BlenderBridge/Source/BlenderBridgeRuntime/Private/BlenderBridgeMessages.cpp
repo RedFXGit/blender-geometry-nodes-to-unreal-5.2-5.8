@@ -2,11 +2,17 @@
 
 #include "BlenderBridgeRuntimeModule.h"
 #include "Dom/JsonObject.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
 namespace
 {
+    FName GetBagPropertyName(const FBridgeInputSchema& Entry)
+    {
+        return FInstancedPropertyBag::SanitizePropertyName(Entry.Id);
+    }
+
     EBlenderBridgeInputType ParseInputType(const FString& Value)
     {
         if (Value.Equals(TEXT("float"), ESearchCase::IgnoreCase))
@@ -37,6 +43,11 @@ namespace
         if (Value.Equals(TEXT("string"), ESearchCase::IgnoreCase))
         {
             return EBlenderBridgeInputType::String;
+        }
+
+        if (Value.Equals(TEXT("enum"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeInputType::Enum;
         }
 
         return EBlenderBridgeInputType::Unsupported;
@@ -100,6 +111,52 @@ namespace
         return true;
     }
 
+    void ParseEnumOptions(const TSharedPtr<FJsonObject>& Payload, TArray<FBridgeEnumOption>& OutOptions)
+    {
+        OutOptions.Reset();
+
+        const TArray<TSharedPtr<FJsonValue>>* OptionsArray = nullptr;
+        if (!Payload.IsValid() || !Payload->TryGetArrayField(TEXT("enum_options"), OptionsArray) || OptionsArray == nullptr)
+        {
+            return;
+        }
+
+        OutOptions.Reserve(OptionsArray->Num());
+        for (int32 Index = 0; Index < OptionsArray->Num(); ++Index)
+        {
+            const TSharedPtr<FJsonObject>* OptionObject = nullptr;
+            if (!(*OptionsArray)[Index].IsValid() || !(*OptionsArray)[Index]->TryGetObject(OptionObject) || !OptionObject || !OptionObject->IsValid())
+            {
+                continue;
+            }
+
+            FBridgeEnumOption Option;
+            OptionObject->Get()->TryGetStringField(TEXT("id"), Option.Id);
+            OptionObject->Get()->TryGetStringField(TEXT("label"), Option.Label);
+
+            double RawValue = static_cast<double>(Index);
+            OptionObject->Get()->TryGetNumberField(TEXT("value"), RawValue);
+            Option.Value = static_cast<int32>(RawValue);
+
+            if (Option.Id.IsEmpty())
+            {
+                Option.Id = Option.Label;
+            }
+
+            if (Option.Label.IsEmpty())
+            {
+                Option.Label = Option.Id.IsEmpty() ? FString::Printf(TEXT("Option %d"), Index) : Option.Id;
+            }
+
+            if (Option.Id.IsEmpty())
+            {
+                Option.Id = FString::Printf(TEXT("Option_%d"), Index);
+            }
+
+            OutOptions.Add(MoveTemp(Option));
+        }
+    }
+
     void SetNumberArrayField(const TSharedRef<FJsonObject>& Payload, const FString& FieldName, const TArray<double>& Values)
     {
         TArray<TSharedPtr<FJsonValue>> ArrayValues;
@@ -138,8 +195,10 @@ bool BlenderBridge::SerializeBridgeMessage(const EBlenderBridgeMessageType Type,
 {
     Payload->SetStringField(TEXT("message_type"), LexToString(Type));
 
-    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutLine);
+    OutLine.Reset();
+
+    using FBridgeMessageJsonWriter = TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>;
+    TSharedRef<FBridgeMessageJsonWriter> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutLine);
     return FJsonSerializer::Serialize(Payload, Writer);
 }
 
@@ -189,11 +248,14 @@ bool BlenderBridge::ParseInputSchema(const TSharedPtr<FJsonObject>& Payload, TAr
         FString TypeText;
         EntryObject->Get()->TryGetStringField(TEXT("id"), IdText);
         EntryObject->Get()->TryGetStringField(TEXT("label"), Entry.Label);
+        EntryObject->Get()->TryGetStringField(TEXT("category"), Entry.CategoryPath);
+        EntryObject->Get()->TryGetStringField(TEXT("description"), Entry.Description);
         EntryObject->Get()->TryGetStringField(TEXT("type"), TypeText);
         EntryObject->Get()->TryGetNumberField(TEXT("default"), Entry.DefaultNumericValue);
         EntryObject->Get()->TryGetNumberField(TEXT("min"), Entry.MinNumericValue);
         EntryObject->Get()->TryGetNumberField(TEXT("max"), Entry.MaxNumericValue);
         EntryObject->Get()->TryGetBoolField(TEXT("default_bool"), Entry.bDefaultBoolValue);
+        Entry.DefaultEnumValue = static_cast<int32>(Entry.DefaultNumericValue);
 
         Entry.Id = FName(*IdText);
         if (Entry.Label.IsEmpty())
@@ -217,6 +279,10 @@ bool BlenderBridge::ParseInputSchema(const TSharedPtr<FJsonObject>& Payload, TAr
             EntryObject->Get()->TryGetStringField(TEXT("default_string"), Entry.DefaultStringValue);
             break;
 
+        case EBlenderBridgeInputType::Enum:
+            ParseEnumOptions(*EntryObject, Entry.EnumOptions);
+            break;
+
         default:
             break;
         }
@@ -233,51 +299,73 @@ void BlenderBridge::AddInputValuesToPayload(const TArray<FBridgeInputSchema>& Sc
 
     for (const FBridgeInputSchema& Entry : Schema)
     {
+        const FName BagPropertyName = GetBagPropertyName(Entry);
+        const FString PayloadFieldName = Entry.Id.ToString();
+
         switch (Entry.Type)
         {
         case EBlenderBridgeInputType::Float:
-            if (const auto Value = InputValues.GetValueDouble(Entry.Id); Value.IsValid())
+            if (const auto Value = InputValues.GetValueDouble(BagPropertyName); Value.IsValid())
             {
-                ValuesObject->SetNumberField(Entry.Id.ToString(), Value.GetValue());
+                ValuesObject->SetNumberField(PayloadFieldName, Value.GetValue());
             }
-            else if (const auto FloatValue = InputValues.GetValueFloat(Entry.Id); FloatValue.IsValid())
+            else if (const auto FloatValue = InputValues.GetValueFloat(BagPropertyName); FloatValue.IsValid())
             {
-                ValuesObject->SetNumberField(Entry.Id.ToString(), FloatValue.GetValue());
+                ValuesObject->SetNumberField(PayloadFieldName, FloatValue.GetValue());
             }
             break;
 
         case EBlenderBridgeInputType::Integer:
-            if (const auto Value = InputValues.GetValueInt32(Entry.Id); Value.IsValid())
+            if (const auto Value = InputValues.GetValueInt32(BagPropertyName); Value.IsValid())
             {
-                ValuesObject->SetNumberField(Entry.Id.ToString(), Value.GetValue());
+                ValuesObject->SetNumberField(PayloadFieldName, Value.GetValue());
             }
             break;
 
         case EBlenderBridgeInputType::Boolean:
-            if (const auto Value = InputValues.GetValueBool(Entry.Id); Value.IsValid())
+            if (const auto Value = InputValues.GetValueBool(BagPropertyName); Value.IsValid())
             {
-                ValuesObject->SetBoolField(Entry.Id.ToString(), Value.GetValue());
+                ValuesObject->SetBoolField(PayloadFieldName, Value.GetValue());
             }
             break;
 
         case EBlenderBridgeInputType::Vector3:
-            if (const auto Value = InputValues.GetValueStruct<FVector>(Entry.Id); Value.IsValid() && Value.GetValue() != nullptr)
+            if (const auto Value = InputValues.GetValueStruct<FVector>(BagPropertyName); Value.IsValid() && Value.GetValue() != nullptr)
             {
-                SetVectorField(ValuesObject, Entry.Id.ToString(), *Value.GetValue());
+                SetVectorField(ValuesObject, PayloadFieldName, *Value.GetValue());
             }
             break;
 
         case EBlenderBridgeInputType::Color:
-            if (const auto Value = InputValues.GetValueStruct<FLinearColor>(Entry.Id); Value.IsValid() && Value.GetValue() != nullptr)
+            if (const auto Value = InputValues.GetValueStruct<FLinearColor>(BagPropertyName); Value.IsValid() && Value.GetValue() != nullptr)
             {
-                SetColorField(ValuesObject, Entry.Id.ToString(), *Value.GetValue());
+                SetColorField(ValuesObject, PayloadFieldName, *Value.GetValue());
             }
             break;
 
         case EBlenderBridgeInputType::String:
-            if (const auto Value = InputValues.GetValueString(Entry.Id); Value.IsValid())
+            if (const auto Value = InputValues.GetValueString(BagPropertyName); Value.IsValid())
             {
-                ValuesObject->SetStringField(Entry.Id.ToString(), Value.GetValue());
+                ValuesObject->SetStringField(PayloadFieldName, Value.GetValue());
+            }
+            break;
+
+        case EBlenderBridgeInputType::Enum:
+            if (const FPropertyBagPropertyDesc* Desc = InputValues.FindPropertyDescByName(BagPropertyName))
+            {
+                if (const UEnum* EnumDefinition = Cast<UEnum>(Desc->ValueTypeObject))
+                {
+                    if (const auto Value = InputValues.GetValueEnum(BagPropertyName, EnumDefinition); Value.IsValid())
+                    {
+                        ValuesObject->SetNumberField(PayloadFieldName, Value.GetValue());
+                        break;
+                    }
+                }
+            }
+
+            if (const auto IntegerValue = InputValues.GetValueInt32(BagPropertyName); IntegerValue.IsValid())
+            {
+                ValuesObject->SetNumberField(PayloadFieldName, IntegerValue.GetValue());
             }
             break;
 

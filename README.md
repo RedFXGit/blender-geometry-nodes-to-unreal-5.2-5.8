@@ -7,9 +7,11 @@ Today it can:
 - launch Blender headless from Unreal
 - exchange control messages over a Windows named pipe
 - stream cooked mesh data through double-buffered shared memory
+- grow the shared-memory budget automatically when a cook exceeds the current slot size
 - display the result in Unreal with `UProceduralMeshComponent`
-- cook either a hello-world triangle or a real `.blend` file
-- reflect and drive one Geometry Nodes modifier with supported input types
+- cook a real `.blend` file
+- import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset
+- reflect and drive one Geometry Nodes modifier with supported input types, including enums and Blender interface panel groupings
 
 ## Current Layout
 
@@ -26,10 +28,12 @@ Today it can:
 - A double-buffered shared-memory contract is in place.
 - Unreal can launch Blender headless, request a cook, and consume the resulting payload.
 - A minimal property-bag-backed input schema can drive the cook.
-- A real Blender object, or all mergeable scene objects, can be loaded from a `.blend` file and streamed into Unreal as triangle-expanded geometry.
+- A real Blender object, including evaluated Geometry Nodes instance output, or all mergeable scene objects can be loaded from a `.blend` file and streamed into Unreal as triangle-expanded geometry.
 - World transforms and basic Blender-to-Unreal coordinate conversion are applied during extraction.
-- A single Geometry Nodes modifier can expose and accept `float`, `int`, `bool`, `vector3`, `color`, and `string` inputs in real-mesh mode.
+- A single Geometry Nodes modifier can expose and accept `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum` inputs in real-mesh mode.
+- Reflected GN inputs preserve Blender interface panel hierarchy in the Unreal details panel.
 - Startup, cook requests, and stop requests all run asynchronously enough to keep the editor usable during the current workflow.
+- Oversized cooks can trigger an automatic worker restart with a larger shared-memory mapping and then retry.
 
 ## Unreal Usage
 
@@ -37,25 +41,28 @@ Today it can:
 2. Enable the `BlenderBridge` plugin and ensure `ProceduralMeshComponent` is available.
 3. Add a [UBlenderBridgeComponent](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h) to an actor.
 4. Point `Blender Executable Path` at Blender, for example `C:\Program Files\Blender Foundation\Blender 4.4\blender.exe`.
-5. For hello world, leave `Source` empty or enable `Hello World Mode` on a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset.
-6. For a real Blender test, create a `BlenderBridgeSource` asset and set:
-   - `Hello World Mode` off
-   - `Blend File`
-   - `Object Name` if you want one object only
-   - `Modifier Name` if you want to reflect a specific Geometry Nodes modifier
-7. Leave `Object Name` blank if you want the worker to merge all mesh-compatible scene objects into one preview mesh.
-8. Click `Start Bridge` and wait for `Bridge ready...`.
-9. Edit reflected values in `Input Values` if a schema appears.
-10. Click `Request Cook`.
-11. Confirm the preview mesh updates in the Unreal viewport.
+5. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
+   Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured `BlenderBridgeSource` asset for it.
+6. Assign that source asset to the component.
+7. Click `Start Bridge` and wait for `Bridge ready...`.
+8. Edit reflected values in `Input Values` if a schema appears.
+9. Click `Request Cook`.
+10. Confirm the preview mesh updates in the Unreal viewport.
 
 ## Geometry Nodes Notes
 
 The current GN path works best when:
 
 - one object clearly owns the target `NODES` modifier
-- `Modifier Name` is set when a file has multiple GN modifiers
+- the saved `.blend` has an obvious active object or only one likely GN candidate when multiple modifiers exist
 - the graph produces a realized mesh-like output
+
+Auto-resolution behavior today:
+
+- if a Geometry Nodes modifier is selected, the worker cooks that object's evaluated GeometrySet, including nested instance references
+- if no Geometry Nodes modifier is selected, the worker cooks all visible mesh-compatible scene objects into one preview mesh
+- if exactly one Geometry Nodes modifier candidate exists, it is selected automatically
+- if multiple candidates exist, the worker prefers the saved active object when possible and otherwise falls back to the first candidate while logging what it chose
 
 Supported reflected socket types today:
 
@@ -65,6 +72,7 @@ Supported reflected socket types today:
 - `vector3`
 - `color`
 - `string`
+- `enum`
 
 Practical note:
 
@@ -73,10 +81,8 @@ Practical note:
 
 ## Intentional Gaps
 
-- No Geometry Nodes extraction from instanced scene output yet.
-- No enum support yet.
-- No shared-memory resize/remap flow yet.
-- No editor customization module yet.
+- No in-place shared-memory remap without worker restart yet.
+- No richer editor customization beyond the current `.blend` import factory yet.
 - No packaged-runtime support yet.
 - No custom render proxy or RDG path yet.
 
