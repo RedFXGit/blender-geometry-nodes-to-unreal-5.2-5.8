@@ -474,22 +474,9 @@ void FBlenderBridgeWorkerSession::QueueStartupMessages()
     PendingLoad.SerializedLine = MoveTemp(SerializedLoad);
     PendingMessages.Add(MoveTemp(PendingLoad));
 
-    TSharedRef<FJsonObject> DescribeInputsPayload = MakeShared<FJsonObject>();
-    FString SerializedDescribeInputs;
-    if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::DescribeInputs, DescribeInputsPayload, SerializedDescribeInputs))
-    {
-        EmitLog(TEXT("Failed to serialize startup DescribeInputs message."));
-        return;
-    }
-
-    FBlenderBridgePendingMessage PendingDescribeInputs;
-    PendingDescribeInputs.Type = EBlenderBridgeMessageType::DescribeInputs;
-    PendingDescribeInputs.SerializedLine = MoveTemp(SerializedDescribeInputs);
-    PendingMessages.Add(MoveTemp(PendingDescribeInputs));
-
     EmitLog(
         FString::Printf(
-            TEXT("Received worker hello. Queueing startup messages for Blend='%s'."),
+            TEXT("Received worker hello. Queueing startup asset load for Blend='%s'."),
             *Config.BlendFilePath));
     SendSerializedMessagesAsync(MoveTemp(PendingMessages));
 }

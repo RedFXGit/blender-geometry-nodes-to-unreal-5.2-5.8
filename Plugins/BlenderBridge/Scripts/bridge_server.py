@@ -1027,6 +1027,7 @@ class BridgeWorker:
 
                 if message_type == "LoadAsset":
                     self.load_asset(message)
+                    self.describe_inputs()
                     continue
 
                 if message_type == "DescribeInputs":
