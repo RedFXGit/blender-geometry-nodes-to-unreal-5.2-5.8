@@ -129,7 +129,8 @@ namespace BlenderBridge
     inline constexpr uint32 SharedSlotCount = 2u;
     inline constexpr uint32 SlotStatusEmpty = 0u;
     inline constexpr uint32 SlotStatusReady = 1u;
-    inline constexpr uint64 DefaultSharedMemoryBytes = 1024ull * 1024ull;
+    inline constexpr uint64 DefaultSharedMemoryBytesPerSlot = 250ull * 1024ull * 1024ull;
+    inline constexpr uint64 DefaultSharedMemoryBytes = DefaultSharedMemoryBytesPerSlot * SharedSlotCount;
     inline constexpr uint64 MinimumSlotStride = 256ull;
 
     BLENDERBRIDGERUNTIME_API const TCHAR* LexToString(EBlenderBridgeMessageType Type);

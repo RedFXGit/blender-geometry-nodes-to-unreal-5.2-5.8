@@ -7,10 +7,10 @@
 
 #include "BlenderBridgeComponent.generated.h"
 
-class FBlenderBridgeWorkerSession;
 class UBlenderBridgeSource;
 class UProceduralMeshComponent;
 class UUserDefinedEnum;
+class FBlenderBridgeSessionManager;
 
 UCLASS(ClassGroup = (Blender), meta = (BlueprintSpawnableComponent))
 class BLENDERBRIDGERUNTIME_API UBlenderBridgeComponent : public USceneComponent
@@ -21,31 +21,42 @@ public:
     UBlenderBridgeComponent();
 
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
-    void StartBridge();
-
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
-    void StopBridge();
-
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
     void RefreshInputSchema();
 
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge", meta = (DisplayName = "Request Cook"))
     void RequestCook();
 
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
-    void PushCurrentInputs();
+    UFUNCTION()
+    TArray<FString> GetAvailableTargetOptions() const;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     TObjectPtr<UBlenderBridgeSource> Source;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
-    FFilePath BlenderExecutablePath;
+    UPROPERTY(
+        EditAnywhere,
+        BlueprintReadOnly,
+        Category = "Blender Bridge",
+        meta = (
+            DisplayName = "Target",
+            GetOptions = "GetAvailableTargetOptions",
+            ToolTip = "The Geometry Nodes target within the selected blend source."
+        ))
+    FString TargetId;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge", meta = (ClampMin = "1048576"))
-    int64 SharedMemoryBytes = static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes);
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
+    FString TargetDisplayLabel;
+
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
+    TArray<FBridgeTargetDescriptor> AvailableTargets;
+
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
+    FString SchemaTargetId;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     EBlenderBridgeConnectionState ConnectionState = EBlenderBridgeConnectionState::Disconnected;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
+    EBlenderBridgeComponentStatus ComponentStatus = EBlenderBridgeComponentStatus::NoSession;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     FString LastStatusMessage;
@@ -60,6 +71,7 @@ public:
     FInstancedPropertyBag InputValues;
 
 protected:
+    virtual void OnRegister() override;
     virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
 
 #if WITH_EDITOR
@@ -67,21 +79,18 @@ protected:
 #endif
 
 private:
-    void StartBridgeInternal(bool bResetInputValuesFromSchema, bool bRequestCookAfterConnect);
-    bool QueueCurrentInputMessages(bool bRequestCook, const TCHAR* ContextMessage);
     void EnsurePreviewMeshComponent();
-    void ApplyMeshSlot(uint32 SlotIndex);
+    void ApplyDecodedMesh(const FBridgeDecodedMesh& DecodedMesh);
     void RebuildInputValues(bool bPreserveExistingValues);
     UUserDefinedEnum* GetOrCreateRuntimeEnum(const FBridgeInputSchema& Entry);
-    void HandleStateChanged(EBlenderBridgeConnectionState NewState);
-    void HandleSchemaReceived(const TArray<FBridgeInputSchema>& NewSchema);
-    void HandleCookComplete(uint32 SlotIndex);
-    void HandleResizeRequired(uint64 RequiredSlotBytes);
-    void HandleLogMessage(const FString& Message);
-    FString ResolveWorkerScriptPath() const;
+    void ResetBridgeData(bool bClearTargetSelection);
+    FString GetSourceHandle() const;
+    const FBridgeTargetDescriptor* FindTargetDescriptor(const FString& InTargetId) const;
+    void UpdateTargetDisplayLabel();
+    void SetBridgeStatus(EBlenderBridgeComponentStatus NewStatus, const FString& Message);
 
 private:
-    TSharedPtr<FBlenderBridgeWorkerSession> Session;
+    friend class FBlenderBridgeSessionManager;
 
     UPROPERTY(Transient)
     TObjectPtr<UProceduralMeshComponent> PreviewMeshComponent;
@@ -90,6 +99,4 @@ private:
     TMap<FName, TObjectPtr<UUserDefinedEnum>> RuntimeInputEnums;
 
     TMap<FName, uint32> RuntimeInputEnumHashes;
-    bool bResetInputValuesFromSchemaOnNextRefresh = false;
-    bool bRequestCookAfterReconnect = false;
 };

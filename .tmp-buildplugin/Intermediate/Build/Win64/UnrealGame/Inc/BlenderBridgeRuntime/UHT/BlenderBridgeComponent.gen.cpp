@@ -265,7 +265,9 @@ struct Z_Construct_UClass_UBlenderBridgeComponent_Statics
 	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SharedMemoryBytes_MetaData[] = {
 		{ "Category", "Blender Bridge" },
 		{ "ClampMin", "1048576" },
+		{ "DisplayName", "Shared Memory Bytes (Total)" },
 		{ "ModuleRelativePath", "Public/BlenderBridgeComponent.h" },
+		{ "ToolTip", "Total shared-memory budget across both bridge slots. The default is 250 MiB per slot, 500 MiB total." },
 	};
 	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_ConnectionState_MetaData[] = {
 		{ "Category", "Blender Bridge" },
@@ -412,10 +414,10 @@ UBlenderBridgeComponent::~UBlenderBridgeComponent() {}
 struct Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics
 {
 	static constexpr FClassRegisterCompiledInInfo ClassInfo[] = {
-		{ Z_Construct_UClass_UBlenderBridgeComponent, UBlenderBridgeComponent::StaticClass, TEXT("UBlenderBridgeComponent"), &Z_Registration_Info_UClass_UBlenderBridgeComponent, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UBlenderBridgeComponent), 2844541603U) },
+		{ Z_Construct_UClass_UBlenderBridgeComponent, UBlenderBridgeComponent::StaticClass, TEXT("UBlenderBridgeComponent"), &Z_Registration_Info_UClass_UBlenderBridgeComponent, CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(UBlenderBridgeComponent), 2457211173U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_2900360941{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_3377950077{
 	TEXT("/Script/BlenderBridgeRuntime"),
 	Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics::ClassInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h__Script_BlenderBridgeRuntime_Statics::ClassInfo),
 	nullptr, 0,

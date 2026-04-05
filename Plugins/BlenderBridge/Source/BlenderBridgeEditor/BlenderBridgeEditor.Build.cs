@@ -24,6 +24,7 @@ public class BlenderBridgeEditor : ModuleRules
                 "Slate",
                 "SlateCore",
                 "StructUtilsEditor",
+                "ToolMenus",
                 "UnrealEd"
             }
         );

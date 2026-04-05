@@ -6,11 +6,12 @@
 #include "Async/Future.h"
 #include "HAL/PlatformProcess.h"
 
+class FJsonObject;
+
 struct FBlenderBridgeWorkerConfig
 {
     FString BlenderExecutablePath;
     FString WorkerScriptPath;
-    FString BlendFilePath;
     uint64 SharedMemoryBytes = BlenderBridge::DefaultSharedMemoryBytes;
 };
 
@@ -24,9 +25,7 @@ class FBlenderBridgeWorkerSession final : public TSharedFromThis<FBlenderBridgeW
 {
 public:
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnStateChanged, EBlenderBridgeConnectionState);
-    DECLARE_MULTICAST_DELEGATE_OneParam(FOnSchemaReceived, const TArray<FBridgeInputSchema>&);
-    DECLARE_MULTICAST_DELEGATE_OneParam(FOnCookComplete, uint32);
-    DECLARE_MULTICAST_DELEGATE_OneParam(FOnResizeRequired, uint64);
+    DECLARE_MULTICAST_DELEGATE_OneParam(FOnMessageReceived, const FBlenderBridgeJsonMessage&);
     DECLARE_MULTICAST_DELEGATE_OneParam(FOnLogMessage, const FString&);
 
     ~FBlenderBridgeWorkerSession();
@@ -34,9 +33,7 @@ public:
     bool Start(const FBlenderBridgeWorkerConfig& InConfig);
     void Stop();
 
-    bool RequestSchema();
-    bool PushInputs(const TArray<FBridgeInputSchema>& Schema, const FInstancedPropertyBag& InputValues);
-    bool RequestCook();
+    bool QueueMessage(EBlenderBridgeMessageType Type, const TSharedRef<FJsonObject>& Payload);
     void SendSerializedMessagesAsync(TArray<FBlenderBridgePendingMessage> Messages);
 
     bool IsConnected() const { return State == EBlenderBridgeConnectionState::Connected && PipeClient.IsConnected(); }
@@ -46,9 +43,7 @@ public:
     const FBlenderBridgeSharedMemoryRegion& GetSharedMemory() const { return SharedMemory; }
 
     FOnStateChanged OnStateChanged;
-    FOnSchemaReceived OnSchemaReceived;
-    FOnCookComplete OnCookComplete;
-    FOnResizeRequired OnResizeRequired;
+    FOnMessageReceived OnMessageReceived;
     FOnLogMessage OnLogMessage;
 
 private:
@@ -57,8 +52,6 @@ private:
     void ListenLoop();
     void HandleMessageOnGameThread(const FBlenderBridgeJsonMessage& Message);
     bool SendMessage(EBlenderBridgeMessageType Type, const TSharedRef<FJsonObject>& Payload);
-    bool QueueMessage(EBlenderBridgeMessageType Type, const TSharedRef<FJsonObject>& Payload);
-    void QueueStartupMessages();
     void BroadcastLogOnGameThread(const FString& Message);
     void SetState(EBlenderBridgeConnectionState NewState);
     void EmitLog(const FString& Message);
@@ -80,6 +73,5 @@ private:
     TAtomic<bool> bStopRequested = false;
     TAtomic<bool> bIsShuttingDown = false;
     TAtomic<bool> bHasStopped = true;
-    bool bStartupMessagesQueued = false;
     EBlenderBridgeConnectionState State = EBlenderBridgeConnectionState::Disconnected;
 };

@@ -16,6 +16,7 @@ public class BlenderBridgeRuntime : ModuleRules
             {
                 "Core",
                 "CoreUObject",
+                "DeveloperSettings",
                 "Engine"
             }
         );

@@ -293,6 +293,51 @@ bool BlenderBridge::ParseInputSchema(const TSharedPtr<FJsonObject>& Payload, TAr
     return true;
 }
 
+bool BlenderBridge::ParseTargetDescriptors(const TSharedPtr<FJsonObject>& Payload, TArray<FBridgeTargetDescriptor>& OutTargets)
+{
+    OutTargets.Reset();
+
+    const TArray<TSharedPtr<FJsonValue>>* TargetArray = nullptr;
+    if (!Payload.IsValid() || !Payload->TryGetArrayField(TEXT("targets"), TargetArray))
+    {
+        return false;
+    }
+
+    for (const TSharedPtr<FJsonValue>& EntryValue : *TargetArray)
+    {
+        const TSharedPtr<FJsonObject>* EntryObject = nullptr;
+        if (!EntryValue.IsValid() || !EntryValue->TryGetObject(EntryObject) || !EntryObject || !EntryObject->IsValid())
+        {
+            continue;
+        }
+
+        FBridgeTargetDescriptor Target;
+        EntryObject->Get()->TryGetStringField(TEXT("id"), Target.TargetId);
+        EntryObject->Get()->TryGetStringField(TEXT("label"), Target.DisplayLabel);
+        EntryObject->Get()->TryGetStringField(TEXT("object_name"), Target.ObjectName);
+        EntryObject->Get()->TryGetStringField(TEXT("modifier_name"), Target.ModifierName);
+
+        if (Target.DisplayLabel.IsEmpty())
+        {
+            if (!Target.ObjectName.IsEmpty() && !Target.ModifierName.IsEmpty())
+            {
+                Target.DisplayLabel = FString::Printf(TEXT("%s / %s"), *Target.ObjectName, *Target.ModifierName);
+            }
+            else
+            {
+                Target.DisplayLabel = Target.TargetId;
+            }
+        }
+
+        if (!Target.TargetId.IsEmpty())
+        {
+            OutTargets.Add(MoveTemp(Target));
+        }
+    }
+
+    return true;
+}
+
 void BlenderBridge::AddInputValuesToPayload(const TArray<FBridgeInputSchema>& Schema, const FInstancedPropertyBag& InputValues, const TSharedRef<FJsonObject>& Payload)
 {
     TSharedRef<FJsonObject> ValuesObject = MakeShared<FJsonObject>();

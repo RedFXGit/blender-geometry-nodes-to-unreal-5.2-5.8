@@ -41,7 +41,15 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     FFilePath BlenderExecutablePath;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge", meta = (ClampMin = "1048576"))
+    UPROPERTY(
+        EditAnywhere,
+        BlueprintReadOnly,
+        Category = "Blender Bridge",
+        meta = (
+            ClampMin = "1048576",
+            DisplayName = "Shared Memory Bytes (Total)",
+            ToolTip = "Total shared-memory budget across both bridge slots. The default is 250 MiB per slot, 500 MiB total."
+        ))
     int64 SharedMemoryBytes = static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes);
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")

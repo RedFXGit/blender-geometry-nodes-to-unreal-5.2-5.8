@@ -4,14 +4,15 @@ This repository contains a working Unreal-to-Blender editor bridge prototype.
 
 Today it can:
 
-- launch Blender headless from Unreal
+- launch one shared headless Blender worker from Unreal Editor
 - exchange control messages over a Windows named pipe
 - stream cooked mesh data through double-buffered shared memory
 - grow the shared-memory budget automatically when a cook exceeds the current slot size
 - display the result in Unreal with `UProceduralMeshComponent`
-- cook a real `.blend` file
+- keep multiple `.blend` sources loaded in one Blender process
 - import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset
-- reflect and drive one Geometry Nodes modifier with supported input types, including enums and Blender interface panel groupings
+- discover multiple Geometry Nodes targets per `.blend`
+- reflect and drive one selected Geometry Nodes target per actor, including enums and Blender interface panel groupings
 
 ## Current Layout
 
@@ -26,43 +27,49 @@ Today it can:
 
 - Windows named pipe control messages work end to end.
 - A double-buffered shared-memory contract is in place.
-- Unreal can launch Blender headless, request a cook, and consume the resulting payload.
-- A minimal property-bag-backed input schema can drive the cook.
-- A real Blender object, including evaluated Geometry Nodes instance output, or all mergeable scene objects can be loaded from a `.blend` file and streamed into Unreal as triangle-expanded geometry.
+- Unreal Editor can launch one shared Blender worker, route actor requests through it, and consume the resulting payloads.
+- A minimal property-bag-backed input schema can drive per-actor cooks while actor input values remain isolated in Unreal.
+- Multiple `.blend` sources can stay loaded in the same Blender session without reopening a new mainfile for every actor switch.
+- A selected Geometry Nodes target can be loaded from a `.blend` file and streamed into Unreal as triangle-expanded geometry.
 - World transforms and basic Blender-to-Unreal coordinate conversion are applied during extraction.
-- A single Geometry Nodes modifier can expose and accept `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum` inputs in real-mesh mode.
+- A Geometry Nodes target can expose and accept `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum` inputs in real-mesh mode.
 - Reflected GN inputs preserve Blender interface panel hierarchy in the Unreal details panel.
-- Startup, cook requests, and stop requests all run asynchronously enough to keep the editor usable during the current workflow.
+- Shared-session startup, schema requests, and cooks all run asynchronously enough to keep the editor usable during the current workflow.
 - Oversized cooks can trigger an automatic worker restart with a larger shared-memory mapping and then retry.
 
 ## Unreal Usage
 
 1. Copy or sync `Plugins/BlenderBridge` into an Unreal C++ project.
 2. Enable the `BlenderBridge` plugin and ensure `ProceduralMeshComponent` is available.
-3. Add a [UBlenderBridgeComponent](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h) to an actor.
-4. Point `Blender Executable Path` at Blender, for example `C:\Program Files\Blender Foundation\Blender 4.4\blender.exe`.
-5. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
+3. Open `Edit > Project Settings > Plugins > Blender Bridge`.
+4. Confirm `Blender Executable Path` is correct.
+   Tip: if it is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
+5. Use `Tools > Blender Bridge > Create Session` to launch the global Blender worker.
+6. Add a [UBlenderBridgeComponent](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h) to an actor.
+7. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
    Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured `BlenderBridgeSource` asset for it.
-6. Assign that source asset to the component.
-7. Click `Start Bridge` and wait for `Bridge ready...`.
-8. Edit reflected values in `Input Values` if a schema appears.
-9. Click `Request Cook`.
-10. Confirm the preview mesh updates in the Unreal viewport.
+8. Assign that source asset to the component.
+9. If the source exposes multiple GN targets, choose one in `Target`.
+10. Click `Refresh Input Schema` if needed and wait for the schema to populate.
+11. Edit reflected values in `Input Values`.
+12. Click `Request Cook`.
+13. Confirm the preview mesh updates in the Unreal viewport.
 
 ## Geometry Nodes Notes
 
 The current GN path works best when:
 
-- one object clearly owns the target `NODES` modifier
-- the saved `.blend` has an obvious active object or only one likely GN candidate when multiple modifiers exist
+- one object clearly owns each target `NODES` modifier
+- the saved `.blend` exposes stable object and modifier names
 - the graph produces a realized mesh-like output
 
-Auto-resolution behavior today:
+Target behavior today:
 
-- if a Geometry Nodes modifier is selected, the worker cooks that object's evaluated GeometrySet, including nested instance references
-- if no Geometry Nodes modifier is selected, the worker cooks all visible mesh-compatible scene objects into one preview mesh
-- if exactly one Geometry Nodes modifier candidate exists, it is selected automatically
-- if multiple candidates exist, the worker prefers the saved active object when possible and otherwise falls back to the first candidate while logging what it chose
+- each loaded `.blend` advertises discovered GN targets as `ObjectName|ModifierName`
+- if a source has exactly one target, the component auto-selects it
+- if a source has multiple targets, the component requires a target selection
+- if a previously saved target no longer exists after reload, the component clears the selection and marks the target unresolved
+- each cook evaluates only the selected target and returns that target's mesh output
 
 Supported reflected socket types today:
 
@@ -79,11 +86,19 @@ Practical note:
 - `vector3` is the most useful next-step test because it maps naturally to nodes like `Transform Geometry`.
 - `color` and `string` values are transported and applied, but whether they create a visible change depends entirely on the GN graph you build.
 
+## Shared Session Notes
+
+- Session controls are global and live under `Tools > Blender Bridge`.
+- Components no longer own Blender worker processes.
+- Multiple actors can point at the same source and target while keeping separate `Input Values` in Unreal.
+- Multiple sources can stay resident in one Blender worker process.
+- The current behavior is editor-only. Packaged/runtime bridge execution is intentionally unsupported in this first shared-session pass.
+
 ## Intentional Gaps
 
 - No in-place shared-memory remap without worker restart yet.
-- No richer editor customization beyond the current `.blend` import factory yet.
-- No packaged-runtime support yet.
+- No richer editor customization beyond the current `.blend` import factory and grouped input UI yet.
+- No packaged-runtime bridge execution yet.
 - No custom render proxy or RDG path yet.
 
 ## Syncing To A UE Project

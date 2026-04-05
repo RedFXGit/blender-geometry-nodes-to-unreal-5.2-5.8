@@ -26,7 +26,6 @@ bool FBlenderBridgeWorkerSession::Start(const FBlenderBridgeWorkerConfig& InConf
     bStopRequested = false;
     bIsShuttingDown = false;
     bHasStopped = false;
-    bStartupMessagesQueued = false;
     SetState(EBlenderBridgeConnectionState::Launching);
 
     const TWeakPtr<FBlenderBridgeWorkerSession> WeakSession = AsShared();
@@ -176,23 +175,6 @@ void FBlenderBridgeWorkerSession::StartOnBackgroundThread()
     EmitLog(TEXT("Pipe connected. Waiting for Blender worker hello."));
 }
 
-bool FBlenderBridgeWorkerSession::RequestSchema()
-{
-    return QueueMessage(EBlenderBridgeMessageType::DescribeInputs, MakeShared<FJsonObject>());
-}
-
-bool FBlenderBridgeWorkerSession::PushInputs(const TArray<FBridgeInputSchema>& Schema, const FInstancedPropertyBag& InputValues)
-{
-    TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
-    BlenderBridge::AddInputValuesToPayload(Schema, InputValues, Payload);
-    return QueueMessage(EBlenderBridgeMessageType::SetInputs, Payload);
-}
-
-bool FBlenderBridgeWorkerSession::RequestCook()
-{
-    return QueueMessage(EBlenderBridgeMessageType::Cook, MakeShared<FJsonObject>());
-}
-
 void FBlenderBridgeWorkerSession::SendSerializedMessagesAsync(TArray<FBlenderBridgePendingMessage> Messages)
 {
     TFuture<void> PreviousSendTask;
@@ -310,81 +292,7 @@ void FBlenderBridgeWorkerSession::HandleMessageOnGameThread(const FBlenderBridge
             EmitLog(FString::Printf(TEXT("Worker reported mode: %s"), *WorkerMode));
         }
 
-        if (!bStartupMessagesQueued)
-        {
-            QueueStartupMessages();
-        }
-        break;
-    }
-
-    case EBlenderBridgeMessageType::DescribeInputs:
-    {
-        TArray<FBridgeInputSchema> Schema;
-        if (BlenderBridge::ParseInputSchema(Message.Payload, Schema))
-        {
-            FString ResolvedObjectName;
-            FString ResolvedModifierName;
-            FString ResolutionNote;
-            if (Message.Payload.IsValid())
-            {
-                Message.Payload->TryGetStringField(TEXT("object_name"), ResolvedObjectName);
-                Message.Payload->TryGetStringField(TEXT("modifier_name"), ResolvedModifierName);
-                Message.Payload->TryGetStringField(TEXT("resolution_note"), ResolutionNote);
-            }
-
-            if (!ResolvedObjectName.IsEmpty())
-            {
-                EmitLog(FString::Printf(TEXT("Auto-resolved Geometry Nodes object: %s"), *ResolvedObjectName));
-            }
-            if (!ResolvedModifierName.IsEmpty())
-            {
-                EmitLog(FString::Printf(TEXT("Auto-resolved Geometry Nodes modifier: %s"), *ResolvedModifierName));
-            }
-            if (!ResolutionNote.IsEmpty())
-            {
-                EmitLog(ResolutionNote);
-            }
-
-            SetState(EBlenderBridgeConnectionState::Connected);
-            OnSchemaReceived.Broadcast(Schema);
-        }
-        break;
-    }
-
-    case EBlenderBridgeMessageType::CookComplete:
-    {
-        double SlotNumber = 0.0;
-        if (Message.Payload.IsValid() && Message.Payload->TryGetNumberField(TEXT("slot"), SlotNumber))
-        {
-            FString ObjectName;
-            if (Message.Payload.IsValid())
-            {
-                Message.Payload->TryGetStringField(TEXT("object_name"), ObjectName);
-            }
-
-            UE_LOG(LogBlenderBridge, Log, TEXT("CookComplete indicates slot %.0f"), SlotNumber);
-            if (!ObjectName.IsEmpty())
-            {
-                EmitLog(FString::Printf(TEXT("CookComplete target object: %s"), *ObjectName));
-            }
-            OnCookComplete.Broadcast(static_cast<uint32>(SlotNumber));
-        }
-        break;
-    }
-
-    case EBlenderBridgeMessageType::ResizeRequired:
-    {
-        double RequiredBytes = 0.0;
-        if (Message.Payload.IsValid() && Message.Payload->TryGetNumberField(TEXT("required_bytes"), RequiredBytes))
-        {
-            const uint64 RequiredSlotBytes = static_cast<uint64>(FMath::Max(RequiredBytes, 0.0));
-            EmitLog(FString::Printf(TEXT("ResizeRequired received. Worker requested %llu bytes per shared-memory slot."), RequiredSlotBytes));
-            OnResizeRequired.Broadcast(RequiredSlotBytes);
-        }
-        else
-        {
-            EmitLog(TEXT("ResizeRequired received without required_bytes payload."));
-        }
+        SetState(EBlenderBridgeConnectionState::Connected);
         break;
     }
 
@@ -396,11 +304,15 @@ void FBlenderBridgeWorkerSession::HandleMessageOnGameThread(const FBlenderBridge
             Message.Payload->TryGetStringField(TEXT("message"), ErrorText);
         }
         EmitLog(FString::Printf(TEXT("Worker error: %s"), *ErrorText));
-        SetState(EBlenderBridgeConnectionState::Error);
+        OnMessageReceived.Broadcast(Message);
         break;
     }
 
     default:
+        if (Message.Type != EBlenderBridgeMessageType::Unknown)
+        {
+            OnMessageReceived.Broadcast(Message);
+        }
         break;
     }
 }
@@ -451,34 +363,6 @@ bool FBlenderBridgeWorkerSession::QueueMessage(const EBlenderBridgeMessageType T
     PendingMessages.Add(MoveTemp(PendingMessage));
     SendSerializedMessagesAsync(MoveTemp(PendingMessages));
     return true;
-}
-
-void FBlenderBridgeWorkerSession::QueueStartupMessages()
-{
-    bStartupMessagesQueued = true;
-
-    TArray<FBlenderBridgePendingMessage> PendingMessages;
-
-    TSharedRef<FJsonObject> LoadPayload = MakeShared<FJsonObject>();
-    LoadPayload->SetStringField(TEXT("blend_file"), Config.BlendFilePath);
-
-    FString SerializedLoad;
-    if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::LoadAsset, LoadPayload, SerializedLoad))
-    {
-        EmitLog(TEXT("Failed to serialize startup LoadAsset message."));
-        return;
-    }
-
-    FBlenderBridgePendingMessage PendingLoad;
-    PendingLoad.Type = EBlenderBridgeMessageType::LoadAsset;
-    PendingLoad.SerializedLine = MoveTemp(SerializedLoad);
-    PendingMessages.Add(MoveTemp(PendingLoad));
-
-    EmitLog(
-        FString::Printf(
-            TEXT("Received worker hello. Queueing startup asset load for Blend='%s'."),
-            *Config.BlendFilePath));
-    SendSerializedMessagesAsync(MoveTemp(PendingMessages));
 }
 
 void FBlenderBridgeWorkerSession::BroadcastLogOnGameThread(const FString& Message)
@@ -556,7 +440,7 @@ FString FBlenderBridgeWorkerSession::MakeSharedMemoryName() const
 FString FBlenderBridgeWorkerSession::BuildBlenderArguments() const
 {
     TArray<FString> Tokens;
-    Tokens.Reserve(12);
+    Tokens.Reserve(10);
 
     Tokens.Add(TEXT("--background"));
     Tokens.Add(TEXT("--python"));
@@ -568,12 +452,6 @@ FString FBlenderBridgeWorkerSession::BuildBlenderArguments() const
     Tokens.Add(FString::Printf(TEXT("\"%s\""), *SharedMemoryName));
     Tokens.Add(TEXT("--shared-memory-bytes"));
     Tokens.Add(LexToString(Config.SharedMemoryBytes));
-
-    if (!Config.BlendFilePath.IsEmpty())
-    {
-        Tokens.Add(TEXT("--blend-file"));
-        Tokens.Add(FString::Printf(TEXT("\"%s\""), *Config.BlendFilePath));
-    }
 
     return FString::Join(Tokens, TEXT(" "));
 }

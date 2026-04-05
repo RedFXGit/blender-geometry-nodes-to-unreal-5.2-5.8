@@ -1,6 +1,7 @@
 import argparse
 import ast
 import ctypes
+import hashlib
 import json
 import mmap
 import os
@@ -34,6 +35,7 @@ SUPPORTED_GN_SOCKET_TYPE_PREFIXES = (
     ("NodeSocketMenu", "enum"),
 )
 MAX_GEOMETRYSET_RECURSION_DEPTH = 16
+BRIDGE_ROOT_COLLECTION_NAME = "BlenderBridgeSources"
 
 ERROR_PIPE_CONNECTED = 535
 
@@ -320,169 +322,217 @@ class NamedPipeServer:
             self._read_buffer += chunk.raw[: bytes_read.value].decode("utf-8")
 
 
+class BridgeLoadedSource:
+    def __init__(
+        self,
+        source_handle: str,
+        blend_file: str,
+        collection_name: str,
+        object_names: list[str],
+        targets: list[dict[str, object]],
+    ) -> None:
+        self.source_handle = source_handle
+        self.blend_file = blend_file
+        self.collection_name = collection_name
+        self.object_names = list(object_names)
+        self.targets = list(targets)
+        self.targets_by_id = {str(target["id"]): target for target in targets}
+
+
 class BridgeWorker:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.pipe = NamedPipeServer(args.pipe_name)
         self.shared_memory = mmap.mmap(-1, args.shared_memory_bytes, tagname=args.shared_memory_name)
-        self.values = {}
-        self.loaded_blend_file = args.blend_file or ""
+        self.loaded_sources: dict[str, BridgeLoadedSource] = {}
 
     def send(self, message_type: str, **payload: object) -> None:
         payload["message_type"] = message_type
         self.pipe.write_json(payload)
 
-    def load_asset(self, payload: dict) -> None:
-        blend_file = payload.get("blend_file") or self.loaded_blend_file or ""
-        self.loaded_blend_file = str(blend_file)
-        if bpy is None:
-            raise RuntimeError("Real mesh cooking requires Blender's bpy module")
+    def send_for_request(
+        self,
+        message_type: str,
+        request_id: str = "",
+        source_handle: str = "",
+        target_id: str = "",
+        **payload: object,
+    ) -> None:
+        if request_id:
+            payload["request_id"] = request_id
+        if source_handle:
+            payload["source_handle"] = source_handle
+        if target_id:
+            payload["target_id"] = target_id
+        self.send(message_type, **payload)
 
-        if not blend_file:
-            raise RuntimeError("Blend file path is required")
+    def get_root_collection(self):
+        if bpy is None or bpy.context.scene is None:
+            raise RuntimeError("A Blender scene is required for the bridge worker")
 
-        if not os.path.exists(str(blend_file)):
-            raise RuntimeError(f"Blend file not found: {blend_file}")
+        root_collection = bpy.data.collections.get(BRIDGE_ROOT_COLLECTION_NAME)
+        if root_collection is None:
+            root_collection = bpy.data.collections.new(BRIDGE_ROOT_COLLECTION_NAME)
 
-        bpy.ops.wm.open_mainfile(filepath=str(blend_file))
+        if bpy.context.scene.collection.children.get(root_collection.name) is None:
+            bpy.context.scene.collection.children.link(root_collection)
 
-    def describe_inputs(self) -> None:
-        schema, target_object, modifier, resolution_note = self.build_geometry_nodes_schema()
-        self.send(
-            "DescribeInputs",
-            schema=schema,
-            object_name=getattr(target_object, "name", ""),
-            modifier_name=getattr(modifier, "name", ""),
-            resolution_note=resolution_note,
-        )
+        return root_collection
 
-    def set_inputs(self, payload: dict) -> None:
-        values = payload.get("values", {})
-        if isinstance(values, dict):
-            self.values.update(values)
-            self.apply_geometry_nodes_inputs()
+    def make_source_collection_name(self, source_handle: str) -> str:
+        digest = hashlib.sha1(source_handle.encode("utf-8")).hexdigest()[:12]
+        return f"BridgeSource_{digest}"
 
-    def resolve_target_objects(self) -> list:
-        if bpy is None:
-            raise RuntimeError("bpy is not available in the bridge worker")
+    def unload_source(self, source_handle: str) -> None:
+        source_state = self.loaded_sources.pop(source_handle, None)
+        if source_state is None or bpy is None:
+            return
 
-        scene_objects = list(bpy.context.scene.objects) if bpy.context.scene is not None else list(bpy.data.objects)
-        target_objects = [obj for obj in scene_objects if obj.type in SUPPORTED_OBJECT_TYPES and not obj.hide_render]
-        if not target_objects:
-            raise RuntimeError("Could not find any mesh-compatible objects in the open blend file")
+        for object_name in reversed(source_state.object_names):
+            bridge_object = bpy.data.objects.get(object_name)
+            if bridge_object is not None:
+                bpy.data.objects.remove(bridge_object, do_unlink=True)
 
-        return target_objects
-
-    def describe_cooked_targets(self, object_names: list[str]) -> str:
-        if not object_names:
-            return "NoObjects"
-
-        if len(object_names) == 1:
-            return object_names[0]
-
-        preview = ", ".join(object_names[:3])
-        if len(object_names) > 3:
-            preview = f"{preview}, +{len(object_names) - 3} more"
-        return f"{len(object_names)} objects ({preview})"
+        source_collection = bpy.data.collections.get(source_state.collection_name)
+        if source_collection is not None:
+            bpy.data.collections.remove(source_collection, do_unlink=True)
 
     def collect_geometry_nodes_candidates(self, target_objects: list) -> list[tuple[object, object]]:
         candidates = []
         for target_object in target_objects:
+            if target_object is None or getattr(target_object, "type", "") not in SUPPORTED_OBJECT_TYPES:
+                continue
+
             for modifier in target_object.modifiers:
                 if modifier.type == "NODES" and modifier.node_group is not None:
                     candidates.append((target_object, modifier))
         return candidates
 
-    def format_geometry_nodes_candidate(self, target_object, modifier) -> str:
-        return f"{target_object.name}.{modifier.name}"
+    def load_source_objects(self, blend_file: str, source_handle: str) -> BridgeLoadedSource:
+        if bpy is None:
+            raise RuntimeError("Real mesh cooking requires Blender's bpy module")
+        if not blend_file:
+            raise RuntimeError("Blend file path is required")
+        if not os.path.exists(blend_file):
+            raise RuntimeError(f"Blend file not found: {blend_file}")
 
-    def describe_geometry_nodes_candidates(self, candidates: list[tuple[object, object]]) -> str:
-        if not candidates:
-            return "none"
+        collection_name = self.make_source_collection_name(source_handle)
+        self.unload_source(source_handle)
 
-        preview = ", ".join(self.format_geometry_nodes_candidate(obj, mod) for obj, mod in candidates[:3])
-        if len(candidates) > 3:
-            preview = f"{preview}, +{len(candidates) - 3} more"
-        return preview
+        with bpy.data.libraries.load(blend_file, link=False) as (data_from, data_to):
+            data_to.objects = list(data_from.objects)
 
-    def resolve_geometry_nodes_modifier(self):
-        target_objects = self.resolve_target_objects()
-        candidates = self.collect_geometry_nodes_candidates(target_objects)
-        if not candidates:
-            return None, None, "No Geometry Nodes modifier found. Continuing without reflected inputs."
+        loaded_objects = [bridge_object for bridge_object in data_to.objects if bridge_object is not None]
+        root_collection = self.get_root_collection()
+        source_collection = bpy.data.collections.new(collection_name)
+        root_collection.children.link(source_collection)
 
-        if len(candidates) == 1:
-            target_object, modifier = candidates[0]
-            return (
-                target_object,
-                modifier,
-                f"Auto-resolved Geometry Nodes modifier '{modifier.name}' on '{target_object.name}'.",
+        for bridge_object in loaded_objects:
+            if source_collection.objects.get(bridge_object.name) is None:
+                source_collection.objects.link(bridge_object)
+
+        targets = self.build_target_descriptors(loaded_objects)
+        source_state = BridgeLoadedSource(
+            source_handle=source_handle,
+            blend_file=blend_file,
+            collection_name=collection_name,
+            object_names=[bridge_object.name for bridge_object in loaded_objects],
+            targets=targets,
+        )
+        self.loaded_sources[source_handle] = source_state
+        return source_state
+
+    def build_target_descriptors(self, target_objects: list) -> list[dict[str, object]]:
+        descriptors: list[dict[str, object]] = []
+        for target_object, modifier in self.collect_geometry_nodes_candidates(target_objects):
+            target_id = f"{target_object.name}|{modifier.name}"
+            descriptors.append(
+                {
+                    "id": target_id,
+                    "label": f"{target_object.name} / {modifier.name}",
+                    "object_name": target_object.name,
+                    "modifier_name": modifier.name,
+                }
             )
 
-        active_object = None
-        if bpy.context.view_layer is not None:
-            active_object = bpy.context.view_layer.objects.active
+        descriptors.sort(key=lambda entry: (str(entry["object_name"]), str(entry["modifier_name"])))
+        return descriptors
 
-        if active_object is not None:
-            active_candidates = [(obj, mod) for obj, mod in candidates if obj == active_object]
-            if len(active_candidates) == 1:
-                target_object, modifier = active_candidates[0]
-                return (
-                    target_object,
-                    modifier,
-                    f"Multiple Geometry Nodes modifiers found. Auto-selected active object '{target_object.name}' modifier '{modifier.name}'.",
+    def ensure_source_loaded(self, payload: dict) -> None:
+        request_id = str(payload.get("request_id") or "")
+        source_handle = str(payload.get("source_handle") or "").strip()
+        blend_file = str(payload.get("blend_file") or "").strip()
+        force_reload = bool(payload.get("force_reload", False))
+
+        if not source_handle:
+            raise RuntimeError("source_handle is required")
+
+        source_state = self.loaded_sources.get(source_handle)
+        if source_state is not None and not force_reload:
+            if blend_file and blend_file != source_state.blend_file:
+                force_reload = True
+            else:
+                self.send_for_request(
+                    "SourceLoaded",
+                    request_id=request_id,
+                    source_handle=source_handle,
+                    blend_file=source_state.blend_file,
+                    targets=source_state.targets,
                 )
+                return
 
-            if active_candidates:
-                target_object, modifier = active_candidates[0]
-                return (
-                    target_object,
-                    modifier,
-                    "Multiple Geometry Nodes modifiers found. "
-                    + f"Auto-selected first active-object modifier '{modifier.name}' on '{target_object.name}'. "
-                    + f"Candidates: {self.describe_geometry_nodes_candidates(candidates)}",
-                )
+        if not blend_file:
+            if source_state is not None:
+                blend_file = source_state.blend_file
+            else:
+                raise RuntimeError("blend_file is required")
 
-        candidate_objects = []
-        for target_object, _modifier in candidates:
-            if target_object not in candidate_objects:
-                candidate_objects.append(target_object)
-
-        if len(candidate_objects) == 1:
-            target_object = candidate_objects[0]
-            target_candidates = [(obj, mod) for obj, mod in candidates if obj == target_object]
-            if len(target_candidates) == 1:
-                _target_object, modifier = target_candidates[0]
-                return (
-                    target_object,
-                    modifier,
-                    f"Auto-resolved Geometry Nodes modifier '{modifier.name}' on '{target_object.name}'.",
-                )
-
-            _target_object, modifier = target_candidates[0]
-            return (
-                target_object,
-                modifier,
-                "Multiple Geometry Nodes modifiers found on the same object. "
-                + f"Auto-selected '{modifier.name}' on '{target_object.name}'. "
-                + f"Candidates: {self.describe_geometry_nodes_candidates(candidates)}",
-            )
-
-        target_object, modifier = candidates[0]
-        return (
-            target_object,
-            modifier,
-            "Multiple Geometry Nodes modifiers found across the scene. "
-            + f"Auto-selected '{modifier.name}' on '{target_object.name}'. "
-            + f"Candidates: {self.describe_geometry_nodes_candidates(candidates)}",
+        source_state = self.load_source_objects(blend_file, source_handle)
+        self.send_for_request(
+            "SourceLoaded",
+            request_id=request_id,
+            source_handle=source_handle,
+            blend_file=source_state.blend_file,
+            targets=source_state.targets,
         )
 
-    def build_geometry_nodes_schema(self):
-        target_object, modifier, resolution_note = self.resolve_geometry_nodes_modifier()
-        if modifier is None or modifier.node_group is None:
-            return [], target_object, modifier, resolution_note
+    def resolve_source_state(self, source_handle: str) -> BridgeLoadedSource:
+        if not source_handle:
+            raise RuntimeError("source_handle is required")
 
-        schema = []
+        source_state = self.loaded_sources.get(source_handle)
+        if source_state is None:
+            raise RuntimeError(f"Source is not loaded: {source_handle}")
+
+        return source_state
+
+    def resolve_target(self, source_handle: str, target_id: str):
+        source_state = self.resolve_source_state(source_handle)
+        if not target_id:
+            raise RuntimeError("target_id is required")
+
+        target_descriptor = source_state.targets_by_id.get(target_id)
+        if target_descriptor is None:
+            raise RuntimeError(f"Target '{target_id}' was not found in loaded source '{source_handle}'")
+
+        target_object = bpy.data.objects.get(str(target_descriptor["object_name"]))
+        if target_object is None:
+            raise RuntimeError(f"Object '{target_descriptor['object_name']}' is no longer available")
+
+        modifier_name = str(target_descriptor["modifier_name"])
+        modifier = target_object.modifiers.get(modifier_name)
+        if modifier is None or modifier.type != "NODES" or modifier.node_group is None:
+            raise RuntimeError(
+                f"Geometry Nodes modifier '{modifier_name}' on '{target_object.name}' is no longer available"
+            )
+
+        return source_state, target_descriptor, target_object, modifier
+
+    def build_geometry_nodes_schema_for_target(self, modifier) -> list[dict[str, object]]:
+        if modifier is None or modifier.node_group is None:
+            return []
+
+        schema: list[dict[str, object]] = []
         for item in modifier.node_group.interface.items_tree:
             if getattr(item, "item_type", "") != "SOCKET":
                 continue
@@ -493,7 +543,7 @@ class BridgeWorker:
             if input_type is None:
                 continue
 
-            entry = {
+            entry: dict[str, object] = {
                 "id": item.identifier,
                 "label": item.name,
                 "type": input_type,
@@ -544,7 +594,23 @@ class BridgeWorker:
 
             schema.append(entry)
 
-        return schema, target_object, modifier, resolution_note
+        return schema
+
+    def describe_target(self, payload: dict) -> None:
+        request_id = str(payload.get("request_id") or "")
+        source_handle = str(payload.get("source_handle") or "").strip()
+        target_id = str(payload.get("target_id") or "").strip()
+        _source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+
+        self.send_for_request(
+            "TargetDescription",
+            request_id=request_id,
+            source_handle=source_handle,
+            target_id=target_id,
+            schema=self.build_geometry_nodes_schema_for_target(modifier),
+            object_name=target_object.name,
+            modifier_name=modifier.name,
+        )
 
     def get_modifier_enum_options(self, modifier, identifier: str) -> list[dict[str, object]]:
         try:
@@ -573,9 +639,8 @@ class BridgeWorker:
 
         return coerced_value
 
-    def apply_geometry_nodes_inputs(self) -> None:
-        target_object, modifier, _resolution_note = self.resolve_geometry_nodes_modifier()
-        if modifier is None or modifier.node_group is None:
+    def apply_geometry_nodes_inputs(self, target_object, modifier, values: dict[str, object]) -> None:
+        if modifier is None or modifier.node_group is None or not isinstance(values, dict):
             return
 
         did_apply_value = False
@@ -590,7 +655,7 @@ class BridgeWorker:
                 continue
 
             identifier = item.identifier
-            if identifier not in self.values:
+            if identifier not in values:
                 continue
 
             use_attribute_key = f"{identifier}_use_attribute"
@@ -601,16 +666,16 @@ class BridgeWorker:
                 modifier[attribute_name_key] = ""
 
             if input_type == "float":
-                modifier[identifier] = float(self.values[identifier])
+                modifier[identifier] = float(values[identifier])
             elif input_type == "integer":
-                modifier[identifier] = int(self.values[identifier])
+                modifier[identifier] = int(values[identifier])
             elif input_type == "boolean":
-                modifier[identifier] = bool(self.values[identifier])
+                modifier[identifier] = bool(values[identifier])
             elif input_type == "vector3":
                 existing_value = modifier.get(identifier, None)
                 target_length = get_numeric_sequence_length(existing_value) or 3
                 modifier[identifier] = coerce_numeric_sequence(
-                    self.values[identifier],
+                    values[identifier],
                     target_length,
                     ("x", "y", "z"),
                     existing_value,
@@ -619,15 +684,16 @@ class BridgeWorker:
                 existing_value = modifier.get(identifier, None)
                 target_length = get_numeric_sequence_length(existing_value) or 4
                 modifier[identifier] = coerce_numeric_sequence(
-                    self.values[identifier],
+                    values[identifier],
                     target_length,
                     ("r", "g", "b", "a"),
                     existing_value,
                 )
             elif input_type == "string":
-                modifier[identifier] = str(self.values[identifier])
+                modifier[identifier] = str(values[identifier])
             elif input_type == "enum":
-                modifier[identifier] = self.coerce_enum_value(modifier, identifier, self.values[identifier])
+                modifier[identifier] = self.coerce_enum_value(modifier, identifier, values[identifier])
+
             did_apply_value = True
 
         if did_apply_value and target_object is not None:
@@ -881,6 +947,9 @@ class BridgeWorker:
         normals: np.ndarray,
         uv0: np.ndarray,
         indices: np.ndarray,
+        request_id: str = "",
+        source_handle: str = "",
+        target_id: str = "",
     ) -> int | None:
         positions = np.ascontiguousarray(positions, dtype=np.float32)
         normals = np.ascontiguousarray(normals, dtype=np.float32)
@@ -907,7 +976,13 @@ class BridgeWorker:
         required_bytes = indices_offset + indices.nbytes
 
         if required_bytes > header.slot_stride:
-            self.send("ResizeRequired", required_bytes=int(required_bytes))
+            self.send_for_request(
+                "ResizeRequired",
+                request_id=request_id,
+                source_handle=source_handle,
+                target_id=target_id,
+                required_bytes=int(required_bytes),
+            )
             return None
 
         slot.status = 0
@@ -943,75 +1018,76 @@ class BridgeWorker:
         header.active_slot = slot_index
         return int(slot_index)
 
-    def cook_real_mesh(self) -> None:
+    def cook_target(self, payload: dict) -> None:
         if bpy is None:
             raise RuntimeError("Real mesh cooking requires Blender's bpy module")
 
-        self.apply_geometry_nodes_inputs()
+        request_id = str(payload.get("request_id") or "")
+        source_handle = str(payload.get("source_handle") or "").strip()
+        target_id = str(payload.get("target_id") or "").strip()
+        values = payload.get("values", {})
+        if not isinstance(values, dict):
+            values = {}
+
+        _source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+        self.apply_geometry_nodes_inputs(target_object, modifier, values)
         bpy.context.view_layer.update()
         depsgraph = bpy.context.evaluated_depsgraph_get()
-        packed_positions_parts = []
-        packed_normals_parts = []
-        packed_uv0_parts = []
-        cooked_object_names = []
+        extracted_buffers, cooked_target_label = self.extract_render_buffers_for_geometry_nodes_target(target_object, depsgraph)
+        if extracted_buffers is None:
+            extracted_buffers = self.extract_render_buffers_for_object(target_object, depsgraph)
+            cooked_target_label = target_object.name
 
-        target_object, modifier, _resolution_note = self.resolve_geometry_nodes_modifier()
-        if target_object is not None and modifier is not None:
-            extracted_buffers, cooked_target_label = self.extract_render_buffers_for_geometry_nodes_target(
-                target_object,
-                depsgraph,
-            )
-            if extracted_buffers is None:
-                extracted_buffers = self.extract_render_buffers_for_object(target_object, depsgraph)
-                cooked_target_label = target_object.name
+        if extracted_buffers is None or extracted_buffers[0].size == 0:
+            raise RuntimeError(f"Target '{target_id}' did not produce any triangles")
 
-            if extracted_buffers is not None and extracted_buffers[0].size > 0:
-                packed_positions_parts.append(extracted_buffers[0])
-                packed_normals_parts.append(extracted_buffers[1])
-                packed_uv0_parts.append(extracted_buffers[2])
-                cooked_object_names.append(cooked_target_label or target_object.name)
-
-        if not packed_positions_parts:
-            target_objects = self.resolve_target_objects()
-            for target_object in target_objects:
-                extracted_buffers = self.extract_render_buffers_for_object(target_object, depsgraph)
-                if extracted_buffers is None:
-                    continue
-
-                packed_positions, packed_normals, packed_uv0 = extracted_buffers
-                if packed_positions.size == 0:
-                    continue
-
-                packed_positions_parts.append(packed_positions)
-                packed_normals_parts.append(packed_normals)
-                packed_uv0_parts.append(packed_uv0)
-                cooked_object_names.append(target_object.name)
-
-        if not packed_positions_parts:
-            raise RuntimeError("No mesh-compatible objects produced triangles in the open blend file")
-
-        merged_positions = np.concatenate(packed_positions_parts, axis=0)
-        merged_normals = np.concatenate(packed_normals_parts, axis=0)
-        merged_uv0 = np.concatenate(packed_uv0_parts, axis=0)
+        merged_positions = extracted_buffers[0]
+        merged_normals = extracted_buffers[1]
+        merged_uv0 = extracted_buffers[2]
         merged_indices = np.arange(merged_positions.shape[0], dtype=np.uint32)
 
-        slot_index = self.write_mesh_to_shared_memory(merged_positions, merged_normals, merged_uv0, merged_indices)
+        slot_index = self.write_mesh_to_shared_memory(
+            merged_positions,
+            merged_normals,
+            merged_uv0,
+            merged_indices,
+            request_id=request_id,
+            source_handle=source_handle,
+            target_id=target_id,
+        )
         if slot_index is None:
             return
 
-        cooked_target_label = self.describe_cooked_targets(cooked_object_names)
-        self.send(
+        self.send_for_request(
             "CookComplete",
+            request_id=request_id,
+            source_handle=source_handle,
+            target_id=target_id,
             slot=slot_index,
             sequence=int(BridgeSharedHeader.from_buffer(self.shared_memory).slots[slot_index].sequence),
             vertex_count=int(merged_positions.shape[0]),
             index_count=int(merged_indices.shape[0]),
             object_name=cooked_target_label,
-            object_count=len(cooked_object_names),
+            object_count=1,
         )
 
-    def cook(self) -> None:
-        self.cook_real_mesh()
+    def handle_message(self, message: dict) -> bool:
+        message_type = str(message.get("message_type", ""))
+        if message_type == "Hello":
+            return True
+        if message_type == "EnsureSourceLoaded":
+            self.ensure_source_loaded(message)
+            return True
+        if message_type == "DescribeTarget":
+            self.describe_target(message)
+            return True
+        if message_type == "CookTarget":
+            self.cook_target(message)
+            return True
+        if message_type == "Shutdown":
+            return False
+
+        raise RuntimeError(f"Unsupported message_type: {message_type}")
 
     def run(self) -> int:
         self.pipe.connect()
@@ -1020,36 +1096,26 @@ class BridgeWorker:
         try:
             while True:
                 message = self.pipe.read_json()
-                message_type = message.get("message_type", "")
-
-                if message_type == "Hello":
+                try:
+                    should_continue = self.handle_message(message)
+                except Exception as exc:  # pylint: disable=broad-except
+                    self.send_for_request(
+                        "Error",
+                        request_id=str(message.get("request_id") or ""),
+                        source_handle=str(message.get("source_handle") or ""),
+                        target_id=str(message.get("target_id") or ""),
+                        message=str(exc),
+                    )
                     continue
 
-                if message_type == "LoadAsset":
-                    self.load_asset(message)
-                    self.describe_inputs()
-                    continue
-
-                if message_type == "DescribeInputs":
-                    self.describe_inputs()
-                    continue
-
-                if message_type == "SetInputs":
-                    self.set_inputs(message)
-                    continue
-
-                if message_type == "Cook":
-                    self.cook()
-                    continue
-
-                if message_type == "Shutdown":
+                if not should_continue:
                     return 0
-
-                self.send("Error", message=f"Unsupported message_type: {message_type}")
         except Exception as exc:  # pylint: disable=broad-except
             self.send("Error", message=str(exc))
             return 1
         finally:
+            for source_handle in list(self.loaded_sources.keys()):
+                self.unload_source(source_handle)
             self.pipe.close()
             self.shared_memory.close()
 

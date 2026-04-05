@@ -15,6 +15,20 @@ enum class EBlenderBridgeConnectionState : uint8
 };
 
 UENUM(BlueprintType)
+enum class EBlenderBridgeComponentStatus : uint8
+{
+    NoSession,
+    SourceNotLoaded,
+    TargetUnresolved,
+    SchemaPending,
+    Ready,
+    CookQueued,
+    Cooking,
+    Cooked,
+    Error
+};
+
+UENUM(BlueprintType)
 enum class EBlenderBridgeInputType : uint8
 {
     Float,
@@ -90,6 +104,24 @@ struct FBridgeInputSchema
     TArray<FBridgeEnumOption> EnumOptions;
 };
 
+USTRUCT(BlueprintType)
+struct FBridgeTargetDescriptor
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString TargetId;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString DisplayLabel;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString ObjectName;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString ModifierName;
+};
+
 struct FBridgeDecodedMesh
 {
     TArray<FVector> Positions;
@@ -112,10 +144,11 @@ enum class EBlenderBridgeMessageType : uint8
 {
     Unknown,
     Hello,
-    LoadAsset,
-    DescribeInputs,
-    SetInputs,
-    Cook,
+    EnsureSourceLoaded,
+    SourceLoaded,
+    DescribeTarget,
+    TargetDescription,
+    CookTarget,
     CookComplete,
     ResizeRequired,
     Error,
@@ -129,7 +162,8 @@ namespace BlenderBridge
     inline constexpr uint32 SharedSlotCount = 2u;
     inline constexpr uint32 SlotStatusEmpty = 0u;
     inline constexpr uint32 SlotStatusReady = 1u;
-    inline constexpr uint64 DefaultSharedMemoryBytes = 1024ull * 1024ull;
+    inline constexpr uint64 DefaultSharedMemoryBytesPerSlot = 250ull * 1024ull * 1024ull;
+    inline constexpr uint64 DefaultSharedMemoryBytes = DefaultSharedMemoryBytesPerSlot * SharedSlotCount;
     inline constexpr uint64 MinimumSlotStride = 256ull;
 
     BLENDERBRIDGERUNTIME_API const TCHAR* LexToString(EBlenderBridgeMessageType Type);

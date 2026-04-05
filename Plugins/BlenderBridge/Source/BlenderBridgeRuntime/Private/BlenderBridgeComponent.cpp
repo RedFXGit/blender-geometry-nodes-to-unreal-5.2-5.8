@@ -1,15 +1,12 @@
 #include "BlenderBridgeComponent.h"
 
-#include "BlenderBridgeMessages.h"
 #include "BlenderBridgeRuntimeModule.h"
+#include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSource.h"
-#include "BlenderBridgeWorkerSession.h"
-#include "Async/Async.h"
-#include "Dom/JsonObject.h"
 #include "Engine/UserDefinedEnum.h"
 #include "GameFramework/Actor.h"
-#include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
 #include "ProceduralMeshComponent.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectGlobals.h"
@@ -147,19 +144,6 @@ namespace
 
         return INDEX_NONE;
     }
-
-    uint64 ComputeExpandedSharedMemoryBytes(const uint64 CurrentTotalBytes, const uint64 RequiredSlotBytes)
-    {
-        const uint64 MinRequiredTotalBytes = sizeof(FBridgeSharedHeader) + (RequiredSlotBytes * BlenderBridge::SharedSlotCount);
-        uint64 ExpandedBytes = FMath::Max(CurrentTotalBytes, BlenderBridge::DefaultSharedMemoryBytes);
-
-        while (ExpandedBytes < MinRequiredTotalBytes)
-        {
-            ExpandedBytes *= 2ull;
-        }
-
-        return ExpandedBytes;
-    }
 }
 
 UBlenderBridgeComponent::UBlenderBridgeComponent()
@@ -168,116 +152,47 @@ UBlenderBridgeComponent::UBlenderBridgeComponent()
     BridgeBuildVersion = BLENDER_BRIDGE_BUILD_VERSION;
 }
 
-void UBlenderBridgeComponent::StartBridge()
+void UBlenderBridgeComponent::OnRegister()
 {
-    StartBridgeInternal(true, false);
-}
+    Super::OnRegister();
 
-void UBlenderBridgeComponent::StartBridgeInternal(const bool bResetInputValuesFromSchema, const bool bRequestCookAfterConnect)
-{
-    StopBridge();
-    LastStatusMessage.Reset();
-
-    EnsurePreviewMeshComponent();
-
-    const FString WorkerScriptPath = ResolveWorkerScriptPath();
-    if (WorkerScriptPath.IsEmpty())
+    if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
     {
-        HandleLogMessage(TEXT("Could not resolve Blender bridge worker script path."));
-        ConnectionState = EBlenderBridgeConnectionState::Error;
-        return;
+        ConnectionState = FBlenderBridgeRuntimeModule::Get().GetSessionManager().GetConnectionState();
     }
-
-    FBlenderBridgeWorkerConfig Config;
-    Config.BlenderExecutablePath = BlenderExecutablePath.FilePath;
-    Config.WorkerScriptPath = WorkerScriptPath;
-    Config.SharedMemoryBytes = static_cast<uint64>(FMath::Max<int64>(SharedMemoryBytes, static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes)));
-
-    if (Source == nullptr)
-    {
-        HandleLogMessage(TEXT("A BlenderBridgeSource asset is required."));
-        ConnectionState = EBlenderBridgeConnectionState::Error;
-        return;
-    }
-
-    Config.BlendFilePath = Source->BlendFile.FilePath;
-    if (Config.BlendFilePath.IsEmpty())
-    {
-        HandleLogMessage(TEXT("Blend File is required."));
-        ConnectionState = EBlenderBridgeConnectionState::Error;
-        return;
-    }
-
-    HandleLogMessage(
-        FString::Printf(
-            TEXT("Starting bridge for Blend='%s'. Object and modifier selection will auto-resolve from the file."),
-            *Config.BlendFilePath));
-    bResetInputValuesFromSchemaOnNextRefresh = bResetInputValuesFromSchema;
-    bRequestCookAfterReconnect = bRequestCookAfterConnect;
-
-    Session = MakeShared<FBlenderBridgeWorkerSession>();
-    Session->OnStateChanged.AddUObject(this, &UBlenderBridgeComponent::HandleStateChanged);
-    Session->OnSchemaReceived.AddUObject(this, &UBlenderBridgeComponent::HandleSchemaReceived);
-    Session->OnCookComplete.AddUObject(this, &UBlenderBridgeComponent::HandleCookComplete);
-    Session->OnResizeRequired.AddUObject(this, &UBlenderBridgeComponent::HandleResizeRequired);
-    Session->OnLogMessage.AddUObject(this, &UBlenderBridgeComponent::HandleLogMessage);
-
-    if (!Session->Start(Config))
-    {
-        if (LastStatusMessage.IsEmpty())
-        {
-            HandleLogMessage(TEXT("Failed to start Blender bridge session."));
-        }
-    }
-}
-
-void UBlenderBridgeComponent::StopBridge()
-{
-    if (Session.IsValid())
-    {
-        TSharedPtr<FBlenderBridgeWorkerSession> SessionToStop = MoveTemp(Session);
-        SessionToStop->OnStateChanged.RemoveAll(this);
-        SessionToStop->OnSchemaReceived.RemoveAll(this);
-        SessionToStop->OnCookComplete.RemoveAll(this);
-        SessionToStop->OnResizeRequired.RemoveAll(this);
-        SessionToStop->OnLogMessage.RemoveAll(this);
-
-        Async(EAsyncExecution::Thread, [SessionToStop = MoveTemp(SessionToStop)]() mutable
-        {
-            SessionToStop->Stop();
-        });
-    }
-
-    if (PreviewMeshComponent != nullptr)
-    {
-        PreviewMeshComponent->ClearAllMeshSections();
-    }
-
-    ConnectionState = EBlenderBridgeConnectionState::Disconnected;
-    LastStatusMessage = TEXT("Stopping bridge session.");
 }
 
 void UBlenderBridgeComponent::RefreshInputSchema()
 {
-    if (Session.IsValid())
-    {
-        Session->RequestSchema();
-    }
+    FBlenderBridgeRuntimeModule::Get().GetSessionManager().RefreshComponentSchema(this, true);
 }
 
 void UBlenderBridgeComponent::RequestCook()
 {
-    QueueCurrentInputMessages(true, TEXT("Queueing cook request."));
+    FBlenderBridgeRuntimeModule::Get().GetSessionManager().RequestCook(this);
 }
 
-void UBlenderBridgeComponent::PushCurrentInputs()
+TArray<FString> UBlenderBridgeComponent::GetAvailableTargetOptions() const
 {
-    QueueCurrentInputMessages(false, TEXT("Queueing input push to Blender worker."));
+    TArray<FString> Options;
+    Options.Reserve(AvailableTargets.Num() + (TargetId.IsEmpty() ? 0 : 1));
+
+    for (const FBridgeTargetDescriptor& Target : AvailableTargets)
+    {
+        Options.Add(Target.TargetId);
+    }
+
+    if (!TargetId.IsEmpty() && !Options.Contains(TargetId))
+    {
+        Options.Add(TargetId);
+    }
+
+    return Options;
 }
 
 void UBlenderBridgeComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
 {
-    StopBridge();
+    ResetBridgeData(false);
     Super::OnComponentDestroyed(bDestroyingHierarchy);
 }
 
@@ -287,63 +202,27 @@ void UBlenderBridgeComponent::PostEditChangeProperty(FPropertyChangedEvent& Prop
     Super::PostEditChangeProperty(PropertyChangedEvent);
 
     const FName ChangedPropertyName = PropertyChangedEvent.GetMemberPropertyName();
-    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, InputValues) && Session.IsValid() && Session->IsConnected())
+    FBlenderBridgeSessionManager& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, Source))
     {
-        QueueCurrentInputMessages(true, TEXT("Queueing cook after input edit."));
+        SessionManager.NotifySourceChanged(this);
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, TargetId))
+    {
+        SessionManager.NotifyTargetChanged(this);
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, InputValues)
+        && ConnectionState == EBlenderBridgeConnectionState::Connected)
+    {
+        SessionManager.RequestCook(this);
     }
 }
 #endif
-
-bool UBlenderBridgeComponent::QueueCurrentInputMessages(const bool bRequestCook, const TCHAR* ContextMessage)
-{
-    if (!Session.IsValid())
-    {
-        return false;
-    }
-
-    if (!Session->IsConnected())
-    {
-        HandleLogMessage(TEXT("Bridge is still initializing. Wait for the input schema before cooking."));
-        return false;
-    }
-
-    TArray<FBlenderBridgePendingMessage> PendingMessages;
-
-    TSharedRef<FJsonObject> SetInputsPayload = MakeShared<FJsonObject>();
-    BlenderBridge::AddInputValuesToPayload(InputSchema, InputValues, SetInputsPayload);
-
-    FString SerializedSetInputs;
-    if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::SetInputs, SetInputsPayload, SerializedSetInputs))
-    {
-        HandleLogMessage(TEXT("Failed to build SetInputs payload."));
-        return false;
-    }
-
-    FBlenderBridgePendingMessage PendingSetInputs;
-    PendingSetInputs.Type = EBlenderBridgeMessageType::SetInputs;
-    PendingSetInputs.SerializedLine = MoveTemp(SerializedSetInputs);
-    PendingMessages.Add(MoveTemp(PendingSetInputs));
-
-    if (bRequestCook)
-    {
-        TSharedRef<FJsonObject> CookPayload = MakeShared<FJsonObject>();
-        FString SerializedCook;
-        if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::Cook, CookPayload, SerializedCook))
-        {
-            HandleLogMessage(TEXT("Failed to build Cook payload."));
-            return false;
-        }
-
-        FBlenderBridgePendingMessage PendingCook;
-        PendingCook.Type = EBlenderBridgeMessageType::Cook;
-        PendingCook.SerializedLine = MoveTemp(SerializedCook);
-        PendingMessages.Add(MoveTemp(PendingCook));
-    }
-
-    HandleLogMessage(ContextMessage);
-    Session->SendSerializedMessagesAsync(MoveTemp(PendingMessages));
-    return true;
-}
 
 void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
 {
@@ -365,29 +244,14 @@ void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
     PreviewMeshComponent->RegisterComponent();
 }
 
-void UBlenderBridgeComponent::ApplyMeshSlot(const uint32 SlotIndex)
+void UBlenderBridgeComponent::ApplyDecodedMesh(const FBridgeDecodedMesh& DecodedMesh)
 {
-    if (!Session.IsValid() || PreviewMeshComponent == nullptr)
+    EnsurePreviewMeshComponent();
+    if (PreviewMeshComponent == nullptr)
     {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to create the preview mesh component."));
         return;
     }
-
-    UE_LOG(LogBlenderBridge, Log, TEXT("Applying bridge mesh from slot %u"), SlotIndex);
-
-    FBridgeDecodedMesh DecodedMesh;
-    if (!Session->GetSharedMemory().ReadMesh(SlotIndex, DecodedMesh))
-    {
-        HandleLogMessage(FString::Printf(TEXT("Failed to read mesh slot %u"), SlotIndex));
-        return;
-    }
-
-    UE_LOG(
-        LogBlenderBridge,
-        Log,
-        TEXT("Decoded bridge mesh from slot %u with %d vertices and %d indices"),
-        SlotIndex,
-        DecodedMesh.Positions.Num(),
-        DecodedMesh.Triangles.Num());
 
     TArray<FColor> VertexColors;
     TArray<FProcMeshTangent> Tangents;
@@ -401,7 +265,6 @@ void UBlenderBridgeComponent::ApplyMeshSlot(const uint32 SlotIndex)
         VertexColors,
         Tangents,
         false);
-    UE_LOG(LogBlenderBridge, Log, TEXT("Created procedural mesh section for slot %u"), SlotIndex);
 }
 
 UUserDefinedEnum* UBlenderBridgeComponent::GetOrCreateRuntimeEnum(const FBridgeInputSchema& Entry)
@@ -571,8 +434,8 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
 
         if (Entry.Type == EBlenderBridgeInputType::Float || Entry.Type == EBlenderBridgeInputType::Integer)
         {
-            Descriptor.SetMetaData(TEXT("ClampMin"), LexToString(Entry.MinNumericValue));
-            Descriptor.SetMetaData(TEXT("ClampMax"), LexToString(Entry.MaxNumericValue));
+            Descriptor.SetMetaData(TEXT("ClampMin"), ::LexToString(Entry.MinNumericValue));
+            Descriptor.SetMetaData(TEXT("ClampMax"), ::LexToString(Entry.MaxNumericValue));
         }
 #endif
         Descriptors.Add(MoveTemp(Descriptor));
@@ -667,66 +530,60 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
     InputValues = MoveTemp(NewBag);
 }
 
-void UBlenderBridgeComponent::HandleStateChanged(const EBlenderBridgeConnectionState NewState)
+void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
 {
-    ConnectionState = NewState;
-}
-
-void UBlenderBridgeComponent::HandleSchemaReceived(const TArray<FBridgeInputSchema>& NewSchema)
-{
-    InputSchema = NewSchema;
-    RebuildInputValues(!bResetInputValuesFromSchemaOnNextRefresh);
-    bResetInputValuesFromSchemaOnNextRefresh = false;
-    HandleLogMessage(FString::Printf(TEXT("Bridge ready. Received %d bridge inputs."), InputSchema.Num()));
-
-    if (bRequestCookAfterReconnect)
+    if (PreviewMeshComponent != nullptr)
     {
-        bRequestCookAfterReconnect = false;
-        QueueCurrentInputMessages(true, TEXT("Shared-memory resize complete. Retrying cook request."));
+        PreviewMeshComponent->ClearAllMeshSections();
+    }
+
+    AvailableTargets.Reset();
+    SchemaTargetId.Reset();
+    InputSchema.Reset();
+    TargetDisplayLabel.Reset();
+    RuntimeInputEnums.Reset();
+    RuntimeInputEnumHashes.Reset();
+    InputValues = FInstancedPropertyBag();
+
+    if (bClearTargetSelection)
+    {
+        TargetId.Reset();
     }
 }
 
-void UBlenderBridgeComponent::HandleCookComplete(const uint32 SlotIndex)
+FString UBlenderBridgeComponent::GetSourceHandle() const
 {
-    ApplyMeshSlot(SlotIndex);
-    HandleLogMessage(FString::Printf(TEXT("Applied bridge mesh from slot %u"), SlotIndex));
+    if (Source == nullptr || Source->BlendFile.FilePath.IsEmpty())
+    {
+        return FString();
+    }
+
+    FString SourceHandle = FPaths::ConvertRelativePathToFull(Source->BlendFile.FilePath);
+    FPaths::NormalizeFilename(SourceHandle);
+    return SourceHandle;
 }
 
-void UBlenderBridgeComponent::HandleResizeRequired(const uint64 RequiredSlotBytes)
+const FBridgeTargetDescriptor* UBlenderBridgeComponent::FindTargetDescriptor(const FString& InTargetId) const
 {
-    const uint64 CurrentTotalBytes = static_cast<uint64>(FMath::Max<int64>(SharedMemoryBytes, static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes)));
-    const uint64 ExpandedSharedMemoryBytes = ComputeExpandedSharedMemoryBytes(CurrentTotalBytes, RequiredSlotBytes);
-    if (ExpandedSharedMemoryBytes <= CurrentTotalBytes)
+    return AvailableTargets.FindByPredicate([&InTargetId](const FBridgeTargetDescriptor& Target)
     {
-        HandleLogMessage(
-            FString::Printf(
-                TEXT("ResizeRequired requested %llu bytes per slot, but the current shared-memory budget of %llu bytes is already large enough."),
-                RequiredSlotBytes,
-                CurrentTotalBytes));
+        return Target.TargetId == InTargetId;
+    });
+}
+
+void UBlenderBridgeComponent::UpdateTargetDisplayLabel()
+{
+    if (const FBridgeTargetDescriptor* TargetDescriptor = FindTargetDescriptor(TargetId))
+    {
+        TargetDisplayLabel = TargetDescriptor->DisplayLabel;
         return;
     }
 
-    SharedMemoryBytes = static_cast<int64>(ExpandedSharedMemoryBytes);
-    HandleLogMessage(
-        FString::Printf(
-            TEXT("Growing shared memory from %llu to %llu bytes to satisfy a %llu-byte slot request. Restarting bridge and retrying cook."),
-            CurrentTotalBytes,
-            ExpandedSharedMemoryBytes,
-            RequiredSlotBytes));
-    StartBridgeInternal(false, true);
+    TargetDisplayLabel = TargetId;
 }
 
-void UBlenderBridgeComponent::HandleLogMessage(const FString& Message)
+void UBlenderBridgeComponent::SetBridgeStatus(const EBlenderBridgeComponentStatus NewStatus, const FString& Message)
 {
+    ComponentStatus = NewStatus;
     LastStatusMessage = Message;
-}
-
-FString UBlenderBridgeComponent::ResolveWorkerScriptPath() const
-{
-    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("BlenderBridge")))
-    {
-        return FPaths::Combine(Plugin->GetBaseDir(), TEXT("Scripts/bridge_server.py"));
-    }
-
-    return FString();
 }
