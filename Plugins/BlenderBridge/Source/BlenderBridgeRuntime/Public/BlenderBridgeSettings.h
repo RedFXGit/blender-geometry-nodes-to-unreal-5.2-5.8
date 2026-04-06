@@ -27,4 +27,14 @@ public:
             ToolTip = "Total shared-memory budget across both bridge slots. The default is 250 MiB per slot, 500 MiB total."
         ))
     int64 SharedMemoryBytes = static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes);
+
+    UPROPERTY(
+        EditAnywhere,
+        Config,
+        Category = "Bake",
+        meta = (
+            DisplayName = "Bake Root Content Path",
+            ToolTip = "Content root where baked Blender Bridge static meshes and generated materials will be written."
+        ))
+    FString BakeRootContentPath = TEXT("/Game/BlenderBridge/Baked");
 };

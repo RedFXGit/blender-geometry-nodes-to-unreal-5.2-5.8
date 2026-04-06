@@ -338,6 +338,108 @@ bool BlenderBridge::ParseTargetDescriptors(const TSharedPtr<FJsonObject>& Payloa
     return true;
 }
 
+bool BlenderBridge::ParseCookedMeshMetadata(
+    const TSharedPtr<FJsonObject>& Payload,
+    TArray<FBridgeMaterialSlotDescriptor>& OutMaterialSlots,
+    TArray<FBridgeMeshSectionDescriptor>& OutSections)
+{
+    OutMaterialSlots.Reset();
+    OutSections.Reset();
+
+    if (!Payload.IsValid())
+    {
+        return false;
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* MaterialSlotArray = nullptr;
+    if (Payload->TryGetArrayField(TEXT("material_slots"), MaterialSlotArray) && MaterialSlotArray != nullptr)
+    {
+        for (const TSharedPtr<FJsonValue>& EntryValue : *MaterialSlotArray)
+        {
+            const TSharedPtr<FJsonObject>* EntryObject = nullptr;
+            if (!EntryValue.IsValid() || !EntryValue->TryGetObject(EntryObject) || !EntryObject || !EntryObject->IsValid())
+            {
+                continue;
+            }
+
+            FBridgeMaterialSlotDescriptor Slot;
+            EntryObject->Get()->TryGetStringField(TEXT("slot_id"), Slot.SlotId);
+            EntryObject->Get()->TryGetStringField(TEXT("slot_name"), Slot.SlotName);
+            EntryObject->Get()->TryGetStringField(TEXT("material_name"), Slot.BlenderMaterialName);
+
+            double SectionIndex = static_cast<double>(INDEX_NONE);
+            EntryObject->Get()->TryGetNumberField(TEXT("section_index"), SectionIndex);
+            Slot.SectionIndex = static_cast<int32>(SectionIndex);
+
+            if (Slot.SlotId.IsEmpty())
+            {
+                Slot.SlotId = Slot.SlotName.IsEmpty() ? Slot.BlenderMaterialName : Slot.SlotName;
+            }
+
+            OutMaterialSlots.Add(MoveTemp(Slot));
+        }
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* SectionArray = nullptr;
+    if (Payload->TryGetArrayField(TEXT("sections"), SectionArray) && SectionArray != nullptr)
+    {
+        for (const TSharedPtr<FJsonValue>& EntryValue : *SectionArray)
+        {
+            const TSharedPtr<FJsonObject>* EntryObject = nullptr;
+            if (!EntryValue.IsValid() || !EntryValue->TryGetObject(EntryObject) || !EntryObject || !EntryObject->IsValid())
+            {
+                continue;
+            }
+
+            FBridgeMeshSectionDescriptor Section;
+            EntryObject->Get()->TryGetStringField(TEXT("slot_id"), Section.SlotId);
+            EntryObject->Get()->TryGetStringField(TEXT("slot_name"), Section.SlotName);
+            EntryObject->Get()->TryGetStringField(TEXT("material_name"), Section.BlenderMaterialName);
+
+            double NumericValue = 0.0;
+            if (EntryObject->Get()->TryGetNumberField(TEXT("section_index"), NumericValue))
+            {
+                Section.SectionIndex = static_cast<int32>(NumericValue);
+            }
+            if (EntryObject->Get()->TryGetNumberField(TEXT("first_vertex"), NumericValue))
+            {
+                Section.FirstVertex = static_cast<int32>(NumericValue);
+            }
+            if (EntryObject->Get()->TryGetNumberField(TEXT("vertex_count"), NumericValue))
+            {
+                Section.VertexCount = static_cast<int32>(NumericValue);
+            }
+            if (EntryObject->Get()->TryGetNumberField(TEXT("first_index"), NumericValue))
+            {
+                Section.FirstIndex = static_cast<int32>(NumericValue);
+            }
+            if (EntryObject->Get()->TryGetNumberField(TEXT("index_count"), NumericValue))
+            {
+                Section.IndexCount = static_cast<int32>(NumericValue);
+            }
+
+            if (Section.SlotId.IsEmpty())
+            {
+                Section.SlotId = Section.SlotName.IsEmpty() ? Section.BlenderMaterialName : Section.SlotName;
+            }
+
+            OutSections.Add(MoveTemp(Section));
+        }
+    }
+
+    if (OutSections.IsEmpty() && OutMaterialSlots.Num() == 1)
+    {
+        FBridgeMeshSectionDescriptor Section;
+        Section.SectionIndex = 0;
+        Section.SlotId = OutMaterialSlots[0].SlotId;
+        Section.SlotName = OutMaterialSlots[0].SlotName;
+        Section.BlenderMaterialName = OutMaterialSlots[0].BlenderMaterialName;
+        OutSections.Add(MoveTemp(Section));
+    }
+
+    return true;
+}
+
 void BlenderBridge::AddInputValuesToPayload(const TArray<FBridgeInputSchema>& Schema, const FInstancedPropertyBag& InputValues, const TSharedRef<FJsonObject>& Payload)
 {
     TSharedRef<FJsonObject> ValuesObject = MakeShared<FJsonObject>();

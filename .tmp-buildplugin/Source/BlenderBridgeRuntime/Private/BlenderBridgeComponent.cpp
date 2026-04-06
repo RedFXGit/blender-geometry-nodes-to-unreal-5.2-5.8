@@ -1,15 +1,14 @@
 #include "BlenderBridgeComponent.h"
 
-#include "BlenderBridgeMessages.h"
 #include "BlenderBridgeRuntimeModule.h"
+#include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSource.h"
-#include "BlenderBridgeWorkerSession.h"
-#include "Async/Async.h"
-#include "Dom/JsonObject.h"
 #include "Engine/UserDefinedEnum.h"
 #include "GameFramework/Actor.h"
-#include "Interfaces/IPluginManager.h"
+#include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
 #include "ProceduralMeshComponent.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectGlobals.h"
@@ -147,19 +146,6 @@ namespace
 
         return INDEX_NONE;
     }
-
-    uint64 ComputeExpandedSharedMemoryBytes(const uint64 CurrentTotalBytes, const uint64 RequiredSlotBytes)
-    {
-        const uint64 MinRequiredTotalBytes = sizeof(FBridgeSharedHeader) + (RequiredSlotBytes * BlenderBridge::SharedSlotCount);
-        uint64 ExpandedBytes = FMath::Max(CurrentTotalBytes, BlenderBridge::DefaultSharedMemoryBytes);
-
-        while (ExpandedBytes < MinRequiredTotalBytes)
-        {
-            ExpandedBytes *= 2ull;
-        }
-
-        return ExpandedBytes;
-    }
 }
 
 UBlenderBridgeComponent::UBlenderBridgeComponent()
@@ -168,116 +154,108 @@ UBlenderBridgeComponent::UBlenderBridgeComponent()
     BridgeBuildVersion = BLENDER_BRIDGE_BUILD_VERSION;
 }
 
-void UBlenderBridgeComponent::StartBridge()
+void UBlenderBridgeComponent::OnRegister()
 {
-    StartBridgeInternal(true, false);
-}
+    Super::OnRegister();
 
-void UBlenderBridgeComponent::StartBridgeInternal(const bool bResetInputValuesFromSchema, const bool bRequestCookAfterConnect)
-{
-    StopBridge();
-    LastStatusMessage.Reset();
-
-    EnsurePreviewMeshComponent();
-
-    const FString WorkerScriptPath = ResolveWorkerScriptPath();
-    if (WorkerScriptPath.IsEmpty())
+    if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
     {
-        HandleLogMessage(TEXT("Could not resolve Blender bridge worker script path."));
-        ConnectionState = EBlenderBridgeConnectionState::Error;
-        return;
+        ConnectionState = FBlenderBridgeRuntimeModule::Get().GetSessionManager().GetConnectionState();
     }
 
-    FBlenderBridgeWorkerConfig Config;
-    Config.BlenderExecutablePath = BlenderExecutablePath.FilePath;
-    Config.WorkerScriptPath = WorkerScriptPath;
-    Config.SharedMemoryBytes = static_cast<uint64>(FMath::Max<int64>(SharedMemoryBytes, static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes)));
-
-    if (Source == nullptr)
-    {
-        HandleLogMessage(TEXT("A BlenderBridgeSource asset is required."));
-        ConnectionState = EBlenderBridgeConnectionState::Error;
-        return;
-    }
-
-    Config.BlendFilePath = Source->BlendFile.FilePath;
-    if (Config.BlendFilePath.IsEmpty())
-    {
-        HandleLogMessage(TEXT("Blend File is required."));
-        ConnectionState = EBlenderBridgeConnectionState::Error;
-        return;
-    }
-
-    HandleLogMessage(
-        FString::Printf(
-            TEXT("Starting bridge for Blend='%s'. Object and modifier selection will auto-resolve from the file."),
-            *Config.BlendFilePath));
-    bResetInputValuesFromSchemaOnNextRefresh = bResetInputValuesFromSchema;
-    bRequestCookAfterReconnect = bRequestCookAfterConnect;
-
-    Session = MakeShared<FBlenderBridgeWorkerSession>();
-    Session->OnStateChanged.AddUObject(this, &UBlenderBridgeComponent::HandleStateChanged);
-    Session->OnSchemaReceived.AddUObject(this, &UBlenderBridgeComponent::HandleSchemaReceived);
-    Session->OnCookComplete.AddUObject(this, &UBlenderBridgeComponent::HandleCookComplete);
-    Session->OnResizeRequired.AddUObject(this, &UBlenderBridgeComponent::HandleResizeRequired);
-    Session->OnLogMessage.AddUObject(this, &UBlenderBridgeComponent::HandleLogMessage);
-
-    if (!Session->Start(Config))
-    {
-        if (LastStatusMessage.IsEmpty())
-        {
-            HandleLogMessage(TEXT("Failed to start Blender bridge session."));
-        }
-    }
-}
-
-void UBlenderBridgeComponent::StopBridge()
-{
-    if (Session.IsValid())
-    {
-        TSharedPtr<FBlenderBridgeWorkerSession> SessionToStop = MoveTemp(Session);
-        SessionToStop->OnStateChanged.RemoveAll(this);
-        SessionToStop->OnSchemaReceived.RemoveAll(this);
-        SessionToStop->OnCookComplete.RemoveAll(this);
-        SessionToStop->OnResizeRequired.RemoveAll(this);
-        SessionToStop->OnLogMessage.RemoveAll(this);
-
-        Async(EAsyncExecution::Thread, [SessionToStop = MoveTemp(SessionToStop)]() mutable
-        {
-            SessionToStop->Stop();
-        });
-    }
-
-    if (PreviewMeshComponent != nullptr)
-    {
-        PreviewMeshComponent->ClearAllMeshSections();
-    }
-
-    ConnectionState = EBlenderBridgeConnectionState::Disconnected;
-    LastStatusMessage = TEXT("Stopping bridge session.");
+    UpdatePreviewVisibility();
+    UpdateBakedOutputVisibility();
 }
 
 void UBlenderBridgeComponent::RefreshInputSchema()
 {
-    if (Session.IsValid())
-    {
-        Session->RequestSchema();
-    }
+    FBlenderBridgeRuntimeModule::Get().GetSessionManager().RefreshComponentSchema(this, true);
 }
 
 void UBlenderBridgeComponent::RequestCook()
 {
-    QueueCurrentInputMessages(true, TEXT("Queueing cook request."));
+    SetShowingBakedOutput(false);
+    FBlenderBridgeRuntimeModule::Get().GetSessionManager().RequestCook(this);
 }
 
-void UBlenderBridgeComponent::PushCurrentInputs()
+void UBlenderBridgeComponent::BakeToStaticMesh()
 {
-    QueueCurrentInputMessages(false, TEXT("Queueing input push to Blender worker."));
+    if (!GIsEditor)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Baking is only supported in the Unreal Editor."));
+        return;
+    }
+
+    if (!HasCookedMesh())
+    {
+        bPendingBakeAfterCook = true;
+        SetBridgeStatus(EBlenderBridgeComponentStatus::CookQueued, TEXT("No cooked mesh is available yet. Requesting a cook before baking."));
+        RequestCook();
+        return;
+    }
+
+    if (FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(this))
+    {
+        bPendingBakeAfterCook = false;
+        return;
+    }
+
+    if (ComponentStatus != EBlenderBridgeComponentStatus::Error)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to bake the bridge output to a static mesh."));
+    }
+}
+
+void UBlenderBridgeComponent::SelectBakedOutput()
+{
+    if (!GIsEditor)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Selecting baked outputs is only supported in the Unreal Editor."));
+        return;
+    }
+
+    if (!FBlenderBridgeRuntimeModule::Get().ExecuteSelectBakedOutput(this))
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("There is no baked bridge output to select."));
+    }
+}
+
+void UBlenderBridgeComponent::DeleteBakedOutput()
+{
+    if (!GIsEditor)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Deleting baked outputs is only supported in the Unreal Editor."));
+        return;
+    }
+
+    if (!FBlenderBridgeRuntimeModule::Get().ExecuteDeleteBakedOutput(this))
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("There is no baked bridge output to delete."));
+    }
+}
+
+TArray<FString> UBlenderBridgeComponent::GetAvailableTargetOptions() const
+{
+    TArray<FString> Options;
+    Options.Reserve(AvailableTargets.Num() + (TargetId.IsEmpty() ? 0 : 1));
+
+    for (const FBridgeTargetDescriptor& Target : AvailableTargets)
+    {
+        Options.Add(Target.TargetId);
+    }
+
+    if (!TargetId.IsEmpty() && !Options.Contains(TargetId))
+    {
+        Options.Add(TargetId);
+    }
+
+    return Options;
 }
 
 void UBlenderBridgeComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
 {
-    StopBridge();
+    CancelPendingBakedOutputVisibilitySwap();
+    ResetBridgeData(false);
     Super::OnComponentDestroyed(bDestroyingHierarchy);
 }
 
@@ -287,63 +265,39 @@ void UBlenderBridgeComponent::PostEditChangeProperty(FPropertyChangedEvent& Prop
     Super::PostEditChangeProperty(PropertyChangedEvent);
 
     const FName ChangedPropertyName = PropertyChangedEvent.GetMemberPropertyName();
-    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, InputValues) && Session.IsValid() && Session->IsConnected())
+    FBlenderBridgeSessionManager& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, Source))
     {
-        QueueCurrentInputMessages(true, TEXT("Queueing cook after input edit."));
+        SessionManager.NotifySourceChanged(this);
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, TargetId))
+    {
+        SessionManager.NotifyTargetChanged(this);
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, MaterialOverrides))
+    {
+        ApplyPreviewMaterials();
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, bHidePreviewAfterBake))
+    {
+        UpdatePreviewVisibility();
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, InputValues)
+        && ConnectionState == EBlenderBridgeConnectionState::Connected)
+    {
+        SessionManager.RequestCook(this);
     }
 }
 #endif
-
-bool UBlenderBridgeComponent::QueueCurrentInputMessages(const bool bRequestCook, const TCHAR* ContextMessage)
-{
-    if (!Session.IsValid())
-    {
-        return false;
-    }
-
-    if (!Session->IsConnected())
-    {
-        HandleLogMessage(TEXT("Bridge is still initializing. Wait for the input schema before cooking."));
-        return false;
-    }
-
-    TArray<FBlenderBridgePendingMessage> PendingMessages;
-
-    TSharedRef<FJsonObject> SetInputsPayload = MakeShared<FJsonObject>();
-    BlenderBridge::AddInputValuesToPayload(InputSchema, InputValues, SetInputsPayload);
-
-    FString SerializedSetInputs;
-    if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::SetInputs, SetInputsPayload, SerializedSetInputs))
-    {
-        HandleLogMessage(TEXT("Failed to build SetInputs payload."));
-        return false;
-    }
-
-    FBlenderBridgePendingMessage PendingSetInputs;
-    PendingSetInputs.Type = EBlenderBridgeMessageType::SetInputs;
-    PendingSetInputs.SerializedLine = MoveTemp(SerializedSetInputs);
-    PendingMessages.Add(MoveTemp(PendingSetInputs));
-
-    if (bRequestCook)
-    {
-        TSharedRef<FJsonObject> CookPayload = MakeShared<FJsonObject>();
-        FString SerializedCook;
-        if (!BlenderBridge::SerializeBridgeMessage(EBlenderBridgeMessageType::Cook, CookPayload, SerializedCook))
-        {
-            HandleLogMessage(TEXT("Failed to build Cook payload."));
-            return false;
-        }
-
-        FBlenderBridgePendingMessage PendingCook;
-        PendingCook.Type = EBlenderBridgeMessageType::Cook;
-        PendingCook.SerializedLine = MoveTemp(SerializedCook);
-        PendingMessages.Add(MoveTemp(PendingCook));
-    }
-
-    HandleLogMessage(ContextMessage);
-    Session->SendSerializedMessagesAsync(MoveTemp(PendingMessages));
-    return true;
-}
 
 void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
 {
@@ -363,45 +317,110 @@ void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
     PreviewMeshComponent->SetupAttachment(this);
     PreviewMeshComponent->SetMobility(EComponentMobility::Movable);
     PreviewMeshComponent->RegisterComponent();
+    UpdatePreviewVisibility();
 }
 
-void UBlenderBridgeComponent::ApplyMeshSlot(const uint32 SlotIndex)
+void UBlenderBridgeComponent::ApplyDecodedMesh(FBridgeDecodedMesh&& DecodedMesh)
 {
-    if (!Session.IsValid() || PreviewMeshComponent == nullptr)
+    EnsurePreviewMeshComponent();
+    if (PreviewMeshComponent == nullptr)
     {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to create the preview mesh component."));
         return;
     }
 
-    UE_LOG(LogBlenderBridge, Log, TEXT("Applying bridge mesh from slot %u"), SlotIndex);
+    LastCookedMesh = MoveTemp(DecodedMesh);
+    bHasValidCookedMesh = LastCookedMesh.Positions.Num() > 0 && LastCookedMesh.Triangles.Num() > 0;
+    LastCookedMaterialSlots = LastCookedMesh.MaterialSlots;
 
-    FBridgeDecodedMesh DecodedMesh;
-    if (!Session->GetSharedMemory().ReadMesh(SlotIndex, DecodedMesh))
+    if (LastCookedMesh.Sections.IsEmpty() && bHasValidCookedMesh)
     {
-        HandleLogMessage(FString::Printf(TEXT("Failed to read mesh slot %u"), SlotIndex));
-        return;
+        FBridgeMaterialSlotDescriptor DefaultSlot;
+        DefaultSlot.SlotId = TEXT("Default");
+        DefaultSlot.SlotName = TEXT("Default");
+        DefaultSlot.BlenderMaterialName = TEXT("Default");
+        DefaultSlot.SectionIndex = 0;
+        LastCookedMesh.MaterialSlots = { DefaultSlot };
+        LastCookedMaterialSlots = LastCookedMesh.MaterialSlots;
+
+        FBridgeMeshSectionDescriptor DefaultSection;
+        DefaultSection.SectionIndex = 0;
+        DefaultSection.FirstVertex = 0;
+        DefaultSection.VertexCount = LastCookedMesh.Positions.Num();
+        DefaultSection.FirstIndex = 0;
+        DefaultSection.IndexCount = LastCookedMesh.Triangles.Num();
+        DefaultSection.SlotId = DefaultSlot.SlotId;
+        DefaultSection.SlotName = DefaultSlot.SlotName;
+        DefaultSection.BlenderMaterialName = DefaultSlot.BlenderMaterialName;
+        LastCookedMesh.Sections = { DefaultSection };
     }
 
-    UE_LOG(
-        LogBlenderBridge,
-        Log,
-        TEXT("Decoded bridge mesh from slot %u with %d vertices and %d indices"),
-        SlotIndex,
-        DecodedMesh.Positions.Num(),
-        DecodedMesh.Triangles.Num());
+    SyncMaterialOverridesFromCookedSlots();
+
+    PreviewMeshComponent->ClearAllMeshSections();
 
     TArray<FColor> VertexColors;
     TArray<FProcMeshTangent> Tangents;
-    PreviewMeshComponent->ClearAllMeshSections();
-    PreviewMeshComponent->CreateMeshSection(
-        0,
-        DecodedMesh.Positions,
-        DecodedMesh.Triangles,
-        DecodedMesh.Normals,
-        DecodedMesh.UV0,
-        VertexColors,
-        Tangents,
-        false);
-    UE_LOG(LogBlenderBridge, Log, TEXT("Created procedural mesh section for slot %u"), SlotIndex);
+    for (const FBridgeMeshSectionDescriptor& Section : LastCookedMesh.Sections)
+    {
+        const bool bHasValidVertexRange =
+            Section.FirstVertex >= 0 &&
+            Section.VertexCount > 0 &&
+            Section.FirstVertex + Section.VertexCount <= LastCookedMesh.Positions.Num() &&
+            Section.FirstVertex + Section.VertexCount <= LastCookedMesh.Normals.Num() &&
+            Section.FirstVertex + Section.VertexCount <= LastCookedMesh.UV0.Num();
+
+        const bool bHasValidIndexRange =
+            Section.FirstIndex >= 0 &&
+            Section.IndexCount >= 3 &&
+            Section.FirstIndex + Section.IndexCount <= LastCookedMesh.Triangles.Num();
+
+        if (!bHasValidVertexRange || !bHasValidIndexRange)
+        {
+            continue;
+        }
+
+        TArray<FVector> SectionPositions;
+        TArray<FVector> SectionNormals;
+        TArray<FVector2D> SectionUv0;
+        TArray<int32> SectionTriangles;
+        SectionPositions.Reserve(Section.VertexCount);
+        SectionNormals.Reserve(Section.VertexCount);
+        SectionUv0.Reserve(Section.VertexCount);
+        SectionTriangles.Reserve(Section.IndexCount);
+
+        for (int32 VertexIndex = 0; VertexIndex < Section.VertexCount; ++VertexIndex)
+        {
+            const int32 SourceVertexIndex = Section.FirstVertex + VertexIndex;
+            SectionPositions.Add(LastCookedMesh.Positions[SourceVertexIndex]);
+            SectionNormals.Add(LastCookedMesh.Normals[SourceVertexIndex]);
+            SectionUv0.Add(LastCookedMesh.UV0[SourceVertexIndex]);
+        }
+
+        for (int32 IndexOffset = 0; IndexOffset < Section.IndexCount; ++IndexOffset)
+        {
+            const int32 SourceTriangleIndex = LastCookedMesh.Triangles[Section.FirstIndex + IndexOffset];
+            SectionTriangles.Add(SourceTriangleIndex - Section.FirstVertex);
+        }
+
+        PreviewMeshComponent->CreateMeshSection(
+            Section.SectionIndex,
+            SectionPositions,
+            SectionTriangles,
+            SectionNormals,
+            SectionUv0,
+            VertexColors,
+            Tangents,
+            false);
+    }
+
+    ApplyPreviewMaterials();
+    SetShowingBakedOutput(false);
+
+    if (bPendingBakeAfterCook)
+    {
+        BakeToStaticMesh();
+    }
 }
 
 UUserDefinedEnum* UBlenderBridgeComponent::GetOrCreateRuntimeEnum(const FBridgeInputSchema& Entry)
@@ -571,8 +590,9 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
 
         if (Entry.Type == EBlenderBridgeInputType::Float || Entry.Type == EBlenderBridgeInputType::Integer)
         {
-            Descriptor.SetMetaData(TEXT("ClampMin"), LexToString(Entry.MinNumericValue));
-            Descriptor.SetMetaData(TEXT("ClampMax"), LexToString(Entry.MaxNumericValue));
+            Descriptor.SetMetaData(TEXT("ClampMin"), ::LexToString(Entry.MinNumericValue));
+            Descriptor.SetMetaData(TEXT("ClampMax"), ::LexToString(Entry.MaxNumericValue));
+            Descriptor.SetMetaData(TEXT("Delta"), Entry.Type == EBlenderBridgeInputType::Integer ? TEXT("1") : TEXT("0.01"));
         }
 #endif
         Descriptors.Add(MoveTemp(Descriptor));
@@ -667,66 +687,198 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
     InputValues = MoveTemp(NewBag);
 }
 
-void UBlenderBridgeComponent::HandleStateChanged(const EBlenderBridgeConnectionState NewState)
+void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
 {
-    ConnectionState = NewState;
-}
+    CancelPendingBakedOutputVisibilitySwap();
 
-void UBlenderBridgeComponent::HandleSchemaReceived(const TArray<FBridgeInputSchema>& NewSchema)
-{
-    InputSchema = NewSchema;
-    RebuildInputValues(!bResetInputValuesFromSchemaOnNextRefresh);
-    bResetInputValuesFromSchemaOnNextRefresh = false;
-    HandleLogMessage(FString::Printf(TEXT("Bridge ready. Received %d bridge inputs."), InputSchema.Num()));
-
-    if (bRequestCookAfterReconnect)
+    if (PreviewMeshComponent != nullptr)
     {
-        bRequestCookAfterReconnect = false;
-        QueueCurrentInputMessages(true, TEXT("Shared-memory resize complete. Retrying cook request."));
+        PreviewMeshComponent->ClearAllMeshSections();
     }
-}
 
-void UBlenderBridgeComponent::HandleCookComplete(const uint32 SlotIndex)
-{
-    ApplyMeshSlot(SlotIndex);
-    HandleLogMessage(FString::Printf(TEXT("Applied bridge mesh from slot %u"), SlotIndex));
-}
+    AvailableTargets.Reset();
+    SchemaTargetId.Reset();
+    InputSchema.Reset();
+    TargetDisplayLabel.Reset();
+    LastCookedMaterialSlots.Reset();
+    LastCookedMesh.Reset();
+    bHasValidCookedMesh = false;
+    bPendingBakeAfterCook = false;
+    bShowingBakedOutput = false;
+    RuntimeInputEnums.Reset();
+    RuntimeInputEnumHashes.Reset();
+    InputValues = FInstancedPropertyBag();
 
-void UBlenderBridgeComponent::HandleResizeRequired(const uint64 RequiredSlotBytes)
-{
-    const uint64 CurrentTotalBytes = static_cast<uint64>(FMath::Max<int64>(SharedMemoryBytes, static_cast<int64>(BlenderBridge::DefaultSharedMemoryBytes)));
-    const uint64 ExpandedSharedMemoryBytes = ComputeExpandedSharedMemoryBytes(CurrentTotalBytes, RequiredSlotBytes);
-    if (ExpandedSharedMemoryBytes <= CurrentTotalBytes)
+    if (bClearTargetSelection)
     {
-        HandleLogMessage(
-            FString::Printf(
-                TEXT("ResizeRequired requested %llu bytes per slot, but the current shared-memory budget of %llu bytes is already large enough."),
-                RequiredSlotBytes,
-                CurrentTotalBytes));
+        TargetId.Reset();
+        MaterialOverrides.Reset();
+    }
+
+    UpdatePreviewVisibility();
+}
+
+FString UBlenderBridgeComponent::GetSourceHandle() const
+{
+    if (Source == nullptr || Source->BlendFile.FilePath.IsEmpty())
+    {
+        return FString();
+    }
+
+    FString SourceHandle = FPaths::ConvertRelativePathToFull(Source->BlendFile.FilePath);
+    FPaths::NormalizeFilename(SourceHandle);
+    return SourceHandle;
+}
+
+const FBridgeTargetDescriptor* UBlenderBridgeComponent::FindTargetDescriptor(const FString& InTargetId) const
+{
+    return AvailableTargets.FindByPredicate([&InTargetId](const FBridgeTargetDescriptor& Target)
+    {
+        return Target.TargetId == InTargetId;
+    });
+}
+
+void UBlenderBridgeComponent::UpdateTargetDisplayLabel()
+{
+    if (const FBridgeTargetDescriptor* TargetDescriptor = FindTargetDescriptor(TargetId))
+    {
+        TargetDisplayLabel = TargetDescriptor->DisplayLabel;
         return;
     }
 
-    SharedMemoryBytes = static_cast<int64>(ExpandedSharedMemoryBytes);
-    HandleLogMessage(
-        FString::Printf(
-            TEXT("Growing shared memory from %llu to %llu bytes to satisfy a %llu-byte slot request. Restarting bridge and retrying cook."),
-            CurrentTotalBytes,
-            ExpandedSharedMemoryBytes,
-            RequiredSlotBytes));
-    StartBridgeInternal(false, true);
+    TargetDisplayLabel = TargetId;
 }
 
-void UBlenderBridgeComponent::HandleLogMessage(const FString& Message)
+void UBlenderBridgeComponent::SetBridgeStatus(const EBlenderBridgeComponentStatus NewStatus, const FString& Message)
 {
+    ComponentStatus = NewStatus;
     LastStatusMessage = Message;
 }
 
-FString UBlenderBridgeComponent::ResolveWorkerScriptPath() const
+void UBlenderBridgeComponent::SyncMaterialOverridesFromCookedSlots()
 {
-    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("BlenderBridge")))
+    TMap<FString, TObjectPtr<UMaterialInterface>> ExistingOverrides;
+    for (const FBlenderBridgeMaterialOverride& Entry : MaterialOverrides)
     {
-        return FPaths::Combine(Plugin->GetBaseDir(), TEXT("Scripts/bridge_server.py"));
+        if (!Entry.SlotId.IsEmpty())
+        {
+            ExistingOverrides.Add(Entry.SlotId, Entry.Material);
+        }
     }
 
-    return FString();
+    TArray<FBlenderBridgeMaterialOverride> UpdatedOverrides;
+    UpdatedOverrides.Reserve(LastCookedMaterialSlots.Num());
+    for (const FBridgeMaterialSlotDescriptor& Slot : LastCookedMaterialSlots)
+    {
+        FBlenderBridgeMaterialOverride OverrideEntry;
+        OverrideEntry.SlotId = Slot.SlotId;
+        OverrideEntry.SlotName = Slot.SlotName;
+        OverrideEntry.BlenderMaterialName = Slot.BlenderMaterialName;
+        if (const TObjectPtr<UMaterialInterface>* ExistingMaterial = ExistingOverrides.Find(Slot.SlotId))
+        {
+            OverrideEntry.Material = *ExistingMaterial;
+        }
+
+        UpdatedOverrides.Add(MoveTemp(OverrideEntry));
+    }
+
+    MaterialOverrides = MoveTemp(UpdatedOverrides);
+}
+
+void UBlenderBridgeComponent::QueueShowBakedOutputOnNextTick()
+{
+    CancelPendingBakedOutputVisibilitySwap();
+
+    PendingShowBakedOutputTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateWeakLambda(
+            this,
+            [this](const float)
+            {
+                PendingShowBakedOutputTickerHandle.Reset();
+                SetShowingBakedOutput(true);
+                return false;
+            }),
+        0.0f);
+}
+
+void UBlenderBridgeComponent::CancelPendingBakedOutputVisibilitySwap()
+{
+    if (PendingShowBakedOutputTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(PendingShowBakedOutputTickerHandle);
+        PendingShowBakedOutputTickerHandle.Reset();
+    }
+}
+
+void UBlenderBridgeComponent::SetShowingBakedOutput(const bool bInShowingBakedOutput)
+{
+    if (!bInShowingBakedOutput)
+    {
+        CancelPendingBakedOutputVisibilitySwap();
+    }
+
+    bShowingBakedOutput = bInShowingBakedOutput;
+    UpdatePreviewVisibility();
+    UpdateBakedOutputVisibility();
+}
+
+void UBlenderBridgeComponent::UpdatePreviewVisibility()
+{
+    if (PreviewMeshComponent == nullptr)
+    {
+        return;
+    }
+
+    const bool bShouldHidePreview = bHidePreviewAfterBake && bShowingBakedOutput && BakedActor.IsValid();
+    PreviewMeshComponent->SetVisibility(!bShouldHidePreview);
+    PreviewMeshComponent->SetHiddenInGame(bShouldHidePreview);
+}
+
+void UBlenderBridgeComponent::UpdateBakedOutputVisibility()
+{
+    if (AStaticMeshActor* BakedStaticMeshActor = BakedActor.Get())
+    {
+        const bool bShouldShowBakedOutput = bShowingBakedOutput;
+#if WITH_EDITOR
+        BakedStaticMeshActor->SetIsTemporarilyHiddenInEditor(!bShouldShowBakedOutput);
+#endif
+        BakedStaticMeshActor->SetActorHiddenInGame(!bShouldShowBakedOutput);
+
+        if (UStaticMeshComponent* StaticMeshComponent = BakedStaticMeshActor->GetStaticMeshComponent())
+        {
+            StaticMeshComponent->SetVisibility(bShouldShowBakedOutput);
+            StaticMeshComponent->SetHiddenInGame(!bShouldShowBakedOutput);
+        }
+    }
+}
+
+void UBlenderBridgeComponent::ApplyPreviewMaterials()
+{
+    if (PreviewMeshComponent == nullptr)
+    {
+        return;
+    }
+
+    for (const FBridgeMeshSectionDescriptor& Section : LastCookedMesh.Sections)
+    {
+        PreviewMeshComponent->SetMaterial(Section.SectionIndex, FindOverrideMaterialBySlotId(Section.SlotId));
+    }
+}
+
+UMaterialInterface* UBlenderBridgeComponent::FindOverrideMaterialBySlotId(const FString& SlotId) const
+{
+    for (const FBlenderBridgeMaterialOverride& Entry : MaterialOverrides)
+    {
+        if (Entry.SlotId == SlotId)
+        {
+            return Entry.Material;
+        }
+    }
+
+    return nullptr;
+}
+
+bool UBlenderBridgeComponent::HasCookedMesh() const
+{
+    return bHasValidCookedMesh && LastCookedMesh.Positions.Num() > 0 && LastCookedMesh.Triangles.Num() > 0;
 }

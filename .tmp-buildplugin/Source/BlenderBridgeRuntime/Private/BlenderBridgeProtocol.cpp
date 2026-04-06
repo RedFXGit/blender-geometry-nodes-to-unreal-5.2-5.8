@@ -6,14 +6,16 @@ const TCHAR* BlenderBridge::LexToString(const EBlenderBridgeMessageType Type)
     {
     case EBlenderBridgeMessageType::Hello:
         return TEXT("Hello");
-    case EBlenderBridgeMessageType::LoadAsset:
-        return TEXT("LoadAsset");
-    case EBlenderBridgeMessageType::DescribeInputs:
-        return TEXT("DescribeInputs");
-    case EBlenderBridgeMessageType::SetInputs:
-        return TEXT("SetInputs");
-    case EBlenderBridgeMessageType::Cook:
-        return TEXT("Cook");
+    case EBlenderBridgeMessageType::EnsureSourceLoaded:
+        return TEXT("EnsureSourceLoaded");
+    case EBlenderBridgeMessageType::SourceLoaded:
+        return TEXT("SourceLoaded");
+    case EBlenderBridgeMessageType::DescribeTarget:
+        return TEXT("DescribeTarget");
+    case EBlenderBridgeMessageType::TargetDescription:
+        return TEXT("TargetDescription");
+    case EBlenderBridgeMessageType::CookTarget:
+        return TEXT("CookTarget");
     case EBlenderBridgeMessageType::CookComplete:
         return TEXT("CookComplete");
     case EBlenderBridgeMessageType::ResizeRequired:
@@ -31,10 +33,11 @@ bool BlenderBridge::TryParseMessageType(const FString& Text, EBlenderBridgeMessa
 {
     static const TMap<FString, EBlenderBridgeMessageType> Lookup = {
         {TEXT("Hello"), EBlenderBridgeMessageType::Hello},
-        {TEXT("LoadAsset"), EBlenderBridgeMessageType::LoadAsset},
-        {TEXT("DescribeInputs"), EBlenderBridgeMessageType::DescribeInputs},
-        {TEXT("SetInputs"), EBlenderBridgeMessageType::SetInputs},
-        {TEXT("Cook"), EBlenderBridgeMessageType::Cook},
+        {TEXT("EnsureSourceLoaded"), EBlenderBridgeMessageType::EnsureSourceLoaded},
+        {TEXT("SourceLoaded"), EBlenderBridgeMessageType::SourceLoaded},
+        {TEXT("DescribeTarget"), EBlenderBridgeMessageType::DescribeTarget},
+        {TEXT("TargetDescription"), EBlenderBridgeMessageType::TargetDescription},
+        {TEXT("CookTarget"), EBlenderBridgeMessageType::CookTarget},
         {TEXT("CookComplete"), EBlenderBridgeMessageType::CookComplete},
         {TEXT("ResizeRequired"), EBlenderBridgeMessageType::ResizeRequired},
         {TEXT("Error"), EBlenderBridgeMessageType::Error},

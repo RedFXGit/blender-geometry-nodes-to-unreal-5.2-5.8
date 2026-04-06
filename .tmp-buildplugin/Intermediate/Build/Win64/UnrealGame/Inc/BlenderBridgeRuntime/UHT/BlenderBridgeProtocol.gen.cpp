@@ -12,10 +12,14 @@ static_assert(!UE_WITH_CONSTINIT_UOBJECT, "This generated code can only be compi
 void EmptyLinkFunctionForGeneratedCodeBlenderBridgeProtocol() {}
 
 // ********** Begin Cross Module References ********************************************************
+BLENDERBRIDGERUNTIME_API UEnum* Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus();
 BLENDERBRIDGERUNTIME_API UEnum* Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeConnectionState();
 BLENDERBRIDGERUNTIME_API UEnum* Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeInputType();
 BLENDERBRIDGERUNTIME_API UScriptStruct* Z_Construct_UScriptStruct_FBridgeEnumOption();
 BLENDERBRIDGERUNTIME_API UScriptStruct* Z_Construct_UScriptStruct_FBridgeInputSchema();
+BLENDERBRIDGERUNTIME_API UScriptStruct* Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor();
+BLENDERBRIDGERUNTIME_API UScriptStruct* Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor();
+BLENDERBRIDGERUNTIME_API UScriptStruct* Z_Construct_UScriptStruct_FBridgeTargetDescriptor();
 COREUOBJECT_API UScriptStruct* Z_Construct_UScriptStruct_FLinearColor();
 COREUOBJECT_API UScriptStruct* Z_Construct_UScriptStruct_FVector();
 UPackage* Z_Construct_UPackage__Script_BlenderBridgeRuntime();
@@ -76,6 +80,72 @@ UEnum* Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeConnectionState()
 	return Z_Registration_Info_UEnum_EBlenderBridgeConnectionState.InnerSingleton;
 }
 // ********** End Enum EBlenderBridgeConnectionState ***********************************************
+
+// ********** Begin Enum EBlenderBridgeComponentStatus *********************************************
+static FEnumRegistrationInfo Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus;
+static UEnum* EBlenderBridgeComponentStatus_StaticEnum()
+{
+	if (!Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus.OuterSingleton)
+	{
+		Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus.OuterSingleton = GetStaticEnum(Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus, (UObject*)Z_Construct_UPackage__Script_BlenderBridgeRuntime(), TEXT("EBlenderBridgeComponentStatus"));
+	}
+	return Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus.OuterSingleton;
+}
+template<> BLENDERBRIDGERUNTIME_NON_ATTRIBUTED_API UEnum* StaticEnum<EBlenderBridgeComponentStatus>()
+{
+	return EBlenderBridgeComponentStatus_StaticEnum();
+}
+struct Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics
+{
+#if WITH_METADATA
+	static constexpr UECodeGen_Private::FMetaDataPairParam Enum_MetaDataParams[] = {
+		{ "BlueprintType", "true" },
+		{ "Cooked.Name", "EBlenderBridgeComponentStatus::Cooked" },
+		{ "Cooking.Name", "EBlenderBridgeComponentStatus::Cooking" },
+		{ "CookQueued.Name", "EBlenderBridgeComponentStatus::CookQueued" },
+		{ "Error.Name", "EBlenderBridgeComponentStatus::Error" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+		{ "NoSession.Name", "EBlenderBridgeComponentStatus::NoSession" },
+		{ "Ready.Name", "EBlenderBridgeComponentStatus::Ready" },
+		{ "SchemaPending.Name", "EBlenderBridgeComponentStatus::SchemaPending" },
+		{ "SourceNotLoaded.Name", "EBlenderBridgeComponentStatus::SourceNotLoaded" },
+		{ "TargetUnresolved.Name", "EBlenderBridgeComponentStatus::TargetUnresolved" },
+	};
+#endif // WITH_METADATA
+	static constexpr UECodeGen_Private::FEnumeratorParam Enumerators[] = {
+		{ "EBlenderBridgeComponentStatus::NoSession", (int64)EBlenderBridgeComponentStatus::NoSession },
+		{ "EBlenderBridgeComponentStatus::SourceNotLoaded", (int64)EBlenderBridgeComponentStatus::SourceNotLoaded },
+		{ "EBlenderBridgeComponentStatus::TargetUnresolved", (int64)EBlenderBridgeComponentStatus::TargetUnresolved },
+		{ "EBlenderBridgeComponentStatus::SchemaPending", (int64)EBlenderBridgeComponentStatus::SchemaPending },
+		{ "EBlenderBridgeComponentStatus::Ready", (int64)EBlenderBridgeComponentStatus::Ready },
+		{ "EBlenderBridgeComponentStatus::CookQueued", (int64)EBlenderBridgeComponentStatus::CookQueued },
+		{ "EBlenderBridgeComponentStatus::Cooking", (int64)EBlenderBridgeComponentStatus::Cooking },
+		{ "EBlenderBridgeComponentStatus::Cooked", (int64)EBlenderBridgeComponentStatus::Cooked },
+		{ "EBlenderBridgeComponentStatus::Error", (int64)EBlenderBridgeComponentStatus::Error },
+	};
+	static const UECodeGen_Private::FEnumParams EnumParams;
+}; // struct Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics 
+const UECodeGen_Private::FEnumParams Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics::EnumParams = {
+	(UObject*(*)())Z_Construct_UPackage__Script_BlenderBridgeRuntime,
+	nullptr,
+	"EBlenderBridgeComponentStatus",
+	"EBlenderBridgeComponentStatus",
+	Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics::Enumerators,
+	RF_Public|RF_Transient|RF_MarkAsNative,
+	UE_ARRAY_COUNT(Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics::Enumerators),
+	EEnumFlags::None,
+	(uint8)UEnum::ECppForm::EnumClass,
+	METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics::Enum_MetaDataParams), Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics::Enum_MetaDataParams)
+};
+UEnum* Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus()
+{
+	if (!Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus.InnerSingleton)
+	{
+		UECodeGen_Private::ConstructUEnum(Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus.InnerSingleton, Z_Construct_UEnum_BlenderBridgeRuntime_EBlenderBridgeComponentStatus_Statics::EnumParams);
+	}
+	return Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus.InnerSingleton;
+}
+// ********** End Enum EBlenderBridgeComponentStatus ***********************************************
 
 // ********** Begin Enum EBlenderBridgeInputType ***************************************************
 static FEnumRegistrationInfo Z_Registration_Info_UEnum_EBlenderBridgeInputType;
@@ -389,19 +459,312 @@ UScriptStruct* Z_Construct_UScriptStruct_FBridgeInputSchema()
 }
 // ********** End ScriptStruct FBridgeInputSchema **************************************************
 
+// ********** Begin ScriptStruct FBridgeTargetDescriptor *******************************************
+struct Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics
+{
+	static inline consteval int32 GetStructSize() { return sizeof(FBridgeTargetDescriptor); }
+	static inline consteval int16 GetStructAlignment() { return alignof(FBridgeTargetDescriptor); }
+#if WITH_METADATA
+	static constexpr UECodeGen_Private::FMetaDataPairParam Struct_MetaDataParams[] = {
+		{ "BlueprintType", "true" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_TargetId_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_DisplayLabel_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_ObjectName_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_ModifierName_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+#endif // WITH_METADATA
+
+// ********** Begin ScriptStruct FBridgeTargetDescriptor constinit property declarations ***********
+	static const UECodeGen_Private::FStrPropertyParams NewProp_TargetId;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_DisplayLabel;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_ObjectName;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_ModifierName;
+	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
+// ********** End ScriptStruct FBridgeTargetDescriptor constinit property declarations *************
+	static void* NewStructOps()
+	{
+		return (UScriptStruct::ICppStructOps*)new UScriptStruct::TCppStructOps<FBridgeTargetDescriptor>();
+	}
+	static const UECodeGen_Private::FStructParams StructParams;
+}; // struct Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics
+static FStructRegistrationInfo Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor;
+class UScriptStruct* FBridgeTargetDescriptor::StaticStruct()
+{
+	if (!Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor.OuterSingleton)
+	{
+		Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor.OuterSingleton = GetStaticStruct(Z_Construct_UScriptStruct_FBridgeTargetDescriptor, (UObject*)Z_Construct_UPackage__Script_BlenderBridgeRuntime(), TEXT("BridgeTargetDescriptor"));
+	}
+	return Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor.OuterSingleton;
+	}
+
+// ********** Begin ScriptStruct FBridgeTargetDescriptor Property Definitions **********************
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_TargetId = { "TargetId", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeTargetDescriptor, TargetId), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_TargetId_MetaData), NewProp_TargetId_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_DisplayLabel = { "DisplayLabel", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeTargetDescriptor, DisplayLabel), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_DisplayLabel_MetaData), NewProp_DisplayLabel_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_ObjectName = { "ObjectName", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeTargetDescriptor, ObjectName), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_ObjectName_MetaData), NewProp_ObjectName_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_ModifierName = { "ModifierName", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeTargetDescriptor, ModifierName), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_ModifierName_MetaData), NewProp_ModifierName_MetaData) };
+const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::PropPointers[] = {
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_TargetId,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_DisplayLabel,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_ObjectName,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewProp_ModifierName,
+};
+static_assert(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::PropPointers) < 2048);
+// ********** End ScriptStruct FBridgeTargetDescriptor Property Definitions ************************
+const UECodeGen_Private::FStructParams Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::StructParams = {
+	(UObject* (*)())Z_Construct_UPackage__Script_BlenderBridgeRuntime,
+	nullptr,
+	&NewStructOps,
+	"BridgeTargetDescriptor",
+	Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::PropPointers,
+	UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::PropPointers),
+	sizeof(FBridgeTargetDescriptor),
+	alignof(FBridgeTargetDescriptor),
+	RF_Public|RF_Transient|RF_MarkAsNative,
+	EStructFlags(0x00000001),
+	METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::Struct_MetaDataParams), Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::Struct_MetaDataParams)
+};
+UScriptStruct* Z_Construct_UScriptStruct_FBridgeTargetDescriptor()
+{
+	if (!Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor.InnerSingleton)
+	{
+		UECodeGen_Private::ConstructUScriptStruct(Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor.InnerSingleton, Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::StructParams);
+	}
+	return CastChecked<UScriptStruct>(Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor.InnerSingleton);
+}
+// ********** End ScriptStruct FBridgeTargetDescriptor *********************************************
+
+// ********** Begin ScriptStruct FBridgeMaterialSlotDescriptor *************************************
+struct Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics
+{
+	static inline consteval int32 GetStructSize() { return sizeof(FBridgeMaterialSlotDescriptor); }
+	static inline consteval int16 GetStructAlignment() { return alignof(FBridgeMaterialSlotDescriptor); }
+#if WITH_METADATA
+	static constexpr UECodeGen_Private::FMetaDataPairParam Struct_MetaDataParams[] = {
+		{ "BlueprintType", "true" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SlotId_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SlotName_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_BlenderMaterialName_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SectionIndex_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+#endif // WITH_METADATA
+
+// ********** Begin ScriptStruct FBridgeMaterialSlotDescriptor constinit property declarations *****
+	static const UECodeGen_Private::FStrPropertyParams NewProp_SlotId;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_SlotName;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_BlenderMaterialName;
+	static const UECodeGen_Private::FIntPropertyParams NewProp_SectionIndex;
+	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
+// ********** End ScriptStruct FBridgeMaterialSlotDescriptor constinit property declarations *******
+	static void* NewStructOps()
+	{
+		return (UScriptStruct::ICppStructOps*)new UScriptStruct::TCppStructOps<FBridgeMaterialSlotDescriptor>();
+	}
+	static const UECodeGen_Private::FStructParams StructParams;
+}; // struct Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics
+static FStructRegistrationInfo Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor;
+class UScriptStruct* FBridgeMaterialSlotDescriptor::StaticStruct()
+{
+	if (!Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor.OuterSingleton)
+	{
+		Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor.OuterSingleton = GetStaticStruct(Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor, (UObject*)Z_Construct_UPackage__Script_BlenderBridgeRuntime(), TEXT("BridgeMaterialSlotDescriptor"));
+	}
+	return Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor.OuterSingleton;
+	}
+
+// ********** Begin ScriptStruct FBridgeMaterialSlotDescriptor Property Definitions ****************
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_SlotId = { "SlotId", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMaterialSlotDescriptor, SlotId), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SlotId_MetaData), NewProp_SlotId_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_SlotName = { "SlotName", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMaterialSlotDescriptor, SlotName), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SlotName_MetaData), NewProp_SlotName_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_BlenderMaterialName = { "BlenderMaterialName", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMaterialSlotDescriptor, BlenderMaterialName), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_BlenderMaterialName_MetaData), NewProp_BlenderMaterialName_MetaData) };
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_SectionIndex = { "SectionIndex", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMaterialSlotDescriptor, SectionIndex), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SectionIndex_MetaData), NewProp_SectionIndex_MetaData) };
+const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::PropPointers[] = {
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_SlotId,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_SlotName,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_BlenderMaterialName,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewProp_SectionIndex,
+};
+static_assert(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::PropPointers) < 2048);
+// ********** End ScriptStruct FBridgeMaterialSlotDescriptor Property Definitions ******************
+const UECodeGen_Private::FStructParams Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::StructParams = {
+	(UObject* (*)())Z_Construct_UPackage__Script_BlenderBridgeRuntime,
+	nullptr,
+	&NewStructOps,
+	"BridgeMaterialSlotDescriptor",
+	Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::PropPointers,
+	UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::PropPointers),
+	sizeof(FBridgeMaterialSlotDescriptor),
+	alignof(FBridgeMaterialSlotDescriptor),
+	RF_Public|RF_Transient|RF_MarkAsNative,
+	EStructFlags(0x00000001),
+	METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::Struct_MetaDataParams), Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::Struct_MetaDataParams)
+};
+UScriptStruct* Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor()
+{
+	if (!Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor.InnerSingleton)
+	{
+		UECodeGen_Private::ConstructUScriptStruct(Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor.InnerSingleton, Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::StructParams);
+	}
+	return CastChecked<UScriptStruct>(Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor.InnerSingleton);
+}
+// ********** End ScriptStruct FBridgeMaterialSlotDescriptor ***************************************
+
+// ********** Begin ScriptStruct FBridgeMeshSectionDescriptor **************************************
+struct Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics
+{
+	static inline consteval int32 GetStructSize() { return sizeof(FBridgeMeshSectionDescriptor); }
+	static inline consteval int16 GetStructAlignment() { return alignof(FBridgeMeshSectionDescriptor); }
+#if WITH_METADATA
+	static constexpr UECodeGen_Private::FMetaDataPairParam Struct_MetaDataParams[] = {
+		{ "BlueprintType", "true" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SectionIndex_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_FirstVertex_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_VertexCount_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_FirstIndex_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_IndexCount_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SlotId_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_SlotName_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+	static constexpr UECodeGen_Private::FMetaDataPairParam NewProp_BlenderMaterialName_MetaData[] = {
+		{ "Category", "Bridge" },
+		{ "ModuleRelativePath", "Public/BlenderBridgeProtocol.h" },
+	};
+#endif // WITH_METADATA
+
+// ********** Begin ScriptStruct FBridgeMeshSectionDescriptor constinit property declarations ******
+	static const UECodeGen_Private::FIntPropertyParams NewProp_SectionIndex;
+	static const UECodeGen_Private::FIntPropertyParams NewProp_FirstVertex;
+	static const UECodeGen_Private::FIntPropertyParams NewProp_VertexCount;
+	static const UECodeGen_Private::FIntPropertyParams NewProp_FirstIndex;
+	static const UECodeGen_Private::FIntPropertyParams NewProp_IndexCount;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_SlotId;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_SlotName;
+	static const UECodeGen_Private::FStrPropertyParams NewProp_BlenderMaterialName;
+	static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];
+// ********** End ScriptStruct FBridgeMeshSectionDescriptor constinit property declarations ********
+	static void* NewStructOps()
+	{
+		return (UScriptStruct::ICppStructOps*)new UScriptStruct::TCppStructOps<FBridgeMeshSectionDescriptor>();
+	}
+	static const UECodeGen_Private::FStructParams StructParams;
+}; // struct Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics
+static FStructRegistrationInfo Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor;
+class UScriptStruct* FBridgeMeshSectionDescriptor::StaticStruct()
+{
+	if (!Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor.OuterSingleton)
+	{
+		Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor.OuterSingleton = GetStaticStruct(Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor, (UObject*)Z_Construct_UPackage__Script_BlenderBridgeRuntime(), TEXT("BridgeMeshSectionDescriptor"));
+	}
+	return Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor.OuterSingleton;
+	}
+
+// ********** Begin ScriptStruct FBridgeMeshSectionDescriptor Property Definitions *****************
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_SectionIndex = { "SectionIndex", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, SectionIndex), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SectionIndex_MetaData), NewProp_SectionIndex_MetaData) };
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_FirstVertex = { "FirstVertex", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, FirstVertex), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_FirstVertex_MetaData), NewProp_FirstVertex_MetaData) };
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_VertexCount = { "VertexCount", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, VertexCount), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_VertexCount_MetaData), NewProp_VertexCount_MetaData) };
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_FirstIndex = { "FirstIndex", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, FirstIndex), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_FirstIndex_MetaData), NewProp_FirstIndex_MetaData) };
+const UECodeGen_Private::FIntPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_IndexCount = { "IndexCount", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Int, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, IndexCount), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_IndexCount_MetaData), NewProp_IndexCount_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_SlotId = { "SlotId", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, SlotId), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SlotId_MetaData), NewProp_SlotId_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_SlotName = { "SlotName", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, SlotName), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_SlotName_MetaData), NewProp_SlotName_MetaData) };
+const UECodeGen_Private::FStrPropertyParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_BlenderMaterialName = { "BlenderMaterialName", nullptr, (EPropertyFlags)0x0010000000020015, UECodeGen_Private::EPropertyGenFlags::Str, RF_Public|RF_Transient|RF_MarkAsNative, nullptr, nullptr, 1, STRUCT_OFFSET(FBridgeMeshSectionDescriptor, BlenderMaterialName), METADATA_PARAMS(UE_ARRAY_COUNT(NewProp_BlenderMaterialName_MetaData), NewProp_BlenderMaterialName_MetaData) };
+const UECodeGen_Private::FPropertyParamsBase* const Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::PropPointers[] = {
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_SectionIndex,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_FirstVertex,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_VertexCount,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_FirstIndex,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_IndexCount,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_SlotId,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_SlotName,
+	(const UECodeGen_Private::FPropertyParamsBase*)&Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewProp_BlenderMaterialName,
+};
+static_assert(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::PropPointers) < 2048);
+// ********** End ScriptStruct FBridgeMeshSectionDescriptor Property Definitions *******************
+const UECodeGen_Private::FStructParams Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::StructParams = {
+	(UObject* (*)())Z_Construct_UPackage__Script_BlenderBridgeRuntime,
+	nullptr,
+	&NewStructOps,
+	"BridgeMeshSectionDescriptor",
+	Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::PropPointers,
+	UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::PropPointers),
+	sizeof(FBridgeMeshSectionDescriptor),
+	alignof(FBridgeMeshSectionDescriptor),
+	RF_Public|RF_Transient|RF_MarkAsNative,
+	EStructFlags(0x00000001),
+	METADATA_PARAMS(UE_ARRAY_COUNT(Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::Struct_MetaDataParams), Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::Struct_MetaDataParams)
+};
+UScriptStruct* Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor()
+{
+	if (!Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor.InnerSingleton)
+	{
+		UECodeGen_Private::ConstructUScriptStruct(Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor.InnerSingleton, Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::StructParams);
+	}
+	return CastChecked<UScriptStruct>(Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor.InnerSingleton);
+}
+// ********** End ScriptStruct FBridgeMeshSectionDescriptor ****************************************
+
 // ********** Begin Registration *******************************************************************
 struct Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeProtocol_h__Script_BlenderBridgeRuntime_Statics
 {
 	static constexpr FEnumRegisterCompiledInInfo EnumInfo[] = {
 		{ EBlenderBridgeConnectionState_StaticEnum, TEXT("EBlenderBridgeConnectionState"), &Z_Registration_Info_UEnum_EBlenderBridgeConnectionState, CONSTRUCT_RELOAD_VERSION_INFO(FEnumReloadVersionInfo, 329663175U) },
+		{ EBlenderBridgeComponentStatus_StaticEnum, TEXT("EBlenderBridgeComponentStatus"), &Z_Registration_Info_UEnum_EBlenderBridgeComponentStatus, CONSTRUCT_RELOAD_VERSION_INFO(FEnumReloadVersionInfo, 1326850390U) },
 		{ EBlenderBridgeInputType_StaticEnum, TEXT("EBlenderBridgeInputType"), &Z_Registration_Info_UEnum_EBlenderBridgeInputType, CONSTRUCT_RELOAD_VERSION_INFO(FEnumReloadVersionInfo, 1526252165U) },
 	};
 	static constexpr FStructRegisterCompiledInInfo ScriptStructInfo[] = {
 		{ FBridgeEnumOption::StaticStruct, Z_Construct_UScriptStruct_FBridgeEnumOption_Statics::NewStructOps, TEXT("BridgeEnumOption"),&Z_Registration_Info_UScriptStruct_FBridgeEnumOption, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FBridgeEnumOption), 2094061569U) },
 		{ FBridgeInputSchema::StaticStruct, Z_Construct_UScriptStruct_FBridgeInputSchema_Statics::NewStructOps, TEXT("BridgeInputSchema"),&Z_Registration_Info_UScriptStruct_FBridgeInputSchema, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FBridgeInputSchema), 3680569157U) },
+		{ FBridgeTargetDescriptor::StaticStruct, Z_Construct_UScriptStruct_FBridgeTargetDescriptor_Statics::NewStructOps, TEXT("BridgeTargetDescriptor"),&Z_Registration_Info_UScriptStruct_FBridgeTargetDescriptor, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FBridgeTargetDescriptor), 3240295580U) },
+		{ FBridgeMaterialSlotDescriptor::StaticStruct, Z_Construct_UScriptStruct_FBridgeMaterialSlotDescriptor_Statics::NewStructOps, TEXT("BridgeMaterialSlotDescriptor"),&Z_Registration_Info_UScriptStruct_FBridgeMaterialSlotDescriptor, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FBridgeMaterialSlotDescriptor), 3915081419U) },
+		{ FBridgeMeshSectionDescriptor::StaticStruct, Z_Construct_UScriptStruct_FBridgeMeshSectionDescriptor_Statics::NewStructOps, TEXT("BridgeMeshSectionDescriptor"),&Z_Registration_Info_UScriptStruct_FBridgeMeshSectionDescriptor, CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(FBridgeMeshSectionDescriptor), 4014436314U) },
 	};
 }; // Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeProtocol_h__Script_BlenderBridgeRuntime_Statics 
-static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeProtocol_h__Script_BlenderBridgeRuntime_1435404352{
+static FRegisterCompiledInInfo Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeProtocol_h__Script_BlenderBridgeRuntime_4017294916{
 	TEXT("/Script/BlenderBridgeRuntime"),
 	nullptr, 0,
 	Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeProtocol_h__Script_BlenderBridgeRuntime_Statics::ScriptStructInfo, UE_ARRAY_COUNT(Z_CompiledInDeferFile_FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeProtocol_h__Script_BlenderBridgeRuntime_Statics::ScriptStructInfo),

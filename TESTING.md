@@ -15,6 +15,8 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 - The worker can apply supported Geometry Nodes values and recook the selected preview mesh.
 - Unreal can read the shared-memory slot and render the result with `UProceduralMeshComponent`.
 - Unreal can import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset.
+- Unreal shows that asset in the Content Browser as `Blender Bridge Source`.
+- Unreal can drag a `BlenderBridgeSource` into the level and spawn a configured `BlenderBridgeActor`.
 - Unreal can restart the shared session with a larger shared-memory budget when a cook exceeds the current slot size.
 
 ## What Is Not Yet Testable As A Finished System
@@ -37,17 +39,15 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 2. Copy `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge` into that project's `Plugins` folder.
 3. Open the project in Unreal and enable the `BlenderBridge` plugin if Unreal prompts for it.
 4. Restart the editor so the plugin compiles and loads.
-5. Create an empty actor in a level.
-6. Add `BlenderBridgeComponent` to that actor.
-7. Open `Edit > Project Settings > Plugins > Blender Bridge` and confirm `Blender Executable Path`.
+5. Open `Edit > Project Settings > Plugins > Blender Bridge` and confirm `Blender Executable Path`.
    Note: if blank, the plugin should auto-detect the newest standard Blender install.
-8. Use `Tools > Blender Bridge > Create Session`.
-9. Drag a `.blend` file into the Content Browser and confirm Unreal creates a `BlenderBridgeSource` asset for it.
-10. Assign that source asset to the component.
-11. If the source exposes multiple GN targets, pick one in `Target`.
-12. Click `Refresh Input Schema` if the schema does not appear automatically.
-13. Click `Request Cook`.
-14. Confirm the selected Blender target appears as a triangulated preview mesh.
+6. Use `Tools > Blender Bridge > Create Session`.
+7. Drag a `.blend` file into the Content Browser and confirm Unreal creates a `BlenderBridgeSource` asset for it.
+8. Drag that `BlenderBridgeSource` asset into the level and confirm Unreal spawns a `BlenderBridgeActor` with `Source` already assigned.
+9. If the source exposes multiple GN targets, pick one in `Target`.
+10. Click `Refresh Input Schema` if the schema does not appear automatically.
+11. Click `Request Cook`.
+12. Confirm the selected Blender target appears as a triangulated preview mesh.
 
 ## Recommended Geometry Nodes Test
 
@@ -90,6 +90,8 @@ These are useful follow-up checks after the vector test:
 - `Connection State` moves to `Connected` after the global session is created.
 - `Last Status Message` shows messages like `Loading source into the global Blender session.`, `Ready. Received ... bridge inputs.`, and `Applied bridge mesh from slot 1`.
 - Importing a `.blend` into the Content Browser creates a `BlenderBridgeSource` with `Blend File` already populated.
+- The Content Browser labels that asset type as `Blender Bridge Source` instead of generic `Data Asset`.
+- Dragging that source into the level creates a `BlenderBridgeActor` with `Source` already assigned on its bridge component.
 - In real-mesh mode, `Target` auto-selects when there is exactly one GN target and stays unresolved when there are multiple.
 - `Input Schema` populates with supported float, int, bool, vector3, color, string, and enum inputs for the selected target.
 - A visible Blender target mesh appears in the level after `Request Cook`.

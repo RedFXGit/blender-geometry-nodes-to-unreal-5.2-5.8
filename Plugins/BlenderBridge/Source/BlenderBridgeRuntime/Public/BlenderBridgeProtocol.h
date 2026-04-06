@@ -122,12 +122,62 @@ struct FBridgeTargetDescriptor
     FString ModifierName;
 };
 
+USTRUCT(BlueprintType)
+struct FBridgeMaterialSlotDescriptor
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString SlotId;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString SlotName;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString BlenderMaterialName;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 SectionIndex = INDEX_NONE;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeMeshSectionDescriptor
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 SectionIndex = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 FirstVertex = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 VertexCount = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 FirstIndex = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    int32 IndexCount = 0;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString SlotId;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString SlotName;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString BlenderMaterialName;
+};
+
 struct FBridgeDecodedMesh
 {
     TArray<FVector> Positions;
     TArray<int32> Triangles;
     TArray<FVector> Normals;
     TArray<FVector2D> UV0;
+    TArray<FBridgeMaterialSlotDescriptor> MaterialSlots;
+    TArray<FBridgeMeshSectionDescriptor> Sections;
     FBox Bounds = FBox(FVector::ZeroVector, FVector::ZeroVector);
 
     void Reset()
@@ -136,6 +186,8 @@ struct FBridgeDecodedMesh
         Triangles.Reset();
         Normals.Reset();
         UV0.Reset();
+        MaterialSlots.Reset();
+        Sections.Reset();
         Bounds = FBox(FVector::ZeroVector, FVector::ZeroVector);
     }
 };

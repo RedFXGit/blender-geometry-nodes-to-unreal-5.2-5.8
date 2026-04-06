@@ -5,6 +5,13 @@
 #include "Dom/JsonObject.h"
 #include "Misc/Guid.h"
 
+namespace
+{
+    constexpr double BlenderPipeConnectAttemptSeconds = 1.0;
+    constexpr double BlenderPipeConnectTimeoutSeconds = 45.0;
+    constexpr double BlenderPipeConnectProgressLogIntervalSeconds = 5.0;
+}
+
 FBlenderBridgeWorkerSession::~FBlenderBridgeWorkerSession()
 {
     StopInternal(false);
@@ -149,12 +156,12 @@ void FBlenderBridgeWorkerSession::StartOnBackgroundThread()
         return;
     }
 
-    if (!PipeClient.Connect(PipeName, 10.0, &bStopRequested))
+    if (!WaitForPipeConnection())
     {
         if (!bStopRequested)
         {
+            CleanupFailedStartup();
             SetState(EBlenderBridgeConnectionState::Error);
-            EmitLog(TEXT("Failed to connect to Blender named pipe."));
         }
         return;
     }
@@ -173,6 +180,86 @@ void FBlenderBridgeWorkerSession::StartOnBackgroundThread()
         }
     });
     EmitLog(TEXT("Pipe connected. Waiting for Blender worker hello."));
+}
+
+bool FBlenderBridgeWorkerSession::WaitForPipeConnection()
+{
+    const double StartTime = FPlatformTime::Seconds();
+    const double Deadline = StartTime + BlenderPipeConnectTimeoutSeconds;
+    double NextProgressLogTime = StartTime + BlenderPipeConnectProgressLogIntervalSeconds;
+
+    EmitLog(FString::Printf(TEXT("Waiting for Blender worker to create named pipe %s."), *PipeName));
+
+    while (FPlatformTime::Seconds() < Deadline)
+    {
+        if (bStopRequested)
+        {
+            return false;
+        }
+
+        const double RemainingSeconds = Deadline - FPlatformTime::Seconds();
+        const double AttemptTimeoutSeconds = FMath::Min(BlenderPipeConnectAttemptSeconds, RemainingSeconds);
+        if (AttemptTimeoutSeconds > 0.0 && PipeClient.Connect(PipeName, AttemptTimeoutSeconds, &bStopRequested, false))
+        {
+            const double ElapsedSeconds = FPlatformTime::Seconds() - StartTime;
+            EmitLog(FString::Printf(TEXT("Connected to Blender named pipe after %.1f seconds."), ElapsedSeconds));
+            return true;
+        }
+
+        if (bStopRequested)
+        {
+            return false;
+        }
+
+        if (!ProcessHandle.IsValid() || !FPlatformProcess::IsProcRunning(ProcessHandle))
+        {
+            int32 ExitCode = 0;
+            if (ProcessHandle.IsValid() && FPlatformProcess::GetProcReturnCode(ProcessHandle, &ExitCode))
+            {
+                EmitLog(FString::Printf(
+                    TEXT("Blender worker exited before creating its named pipe (exit code %d)."),
+                    ExitCode));
+            }
+            else
+            {
+                EmitLog(TEXT("Blender worker exited before creating its named pipe."));
+            }
+            return false;
+        }
+
+        const double Now = FPlatformTime::Seconds();
+        if (Now >= NextProgressLogTime)
+        {
+            EmitLog(FString::Printf(
+                TEXT("Still waiting for Blender worker named pipe after %.1f seconds. Blender is still running."),
+                Now - StartTime));
+            NextProgressLogTime = Now + BlenderPipeConnectProgressLogIntervalSeconds;
+        }
+    }
+
+    EmitLog(FString::Printf(
+        TEXT("Timed out after %.1f seconds waiting for Blender worker to create named pipe %s."),
+        BlenderPipeConnectTimeoutSeconds,
+        *PipeName));
+    return false;
+}
+
+void FBlenderBridgeWorkerSession::CleanupFailedStartup()
+{
+    PipeClient.Disconnect();
+
+    if (ProcessHandle.IsValid())
+    {
+        if (FPlatformProcess::IsProcRunning(ProcessHandle))
+        {
+            FPlatformProcess::TerminateProc(ProcessHandle, true);
+        }
+
+        FPlatformProcess::CloseProc(ProcessHandle);
+        ProcessHandle.Reset();
+    }
+
+    SharedMemory.Reset();
 }
 
 void FBlenderBridgeWorkerSession::SendSerializedMessagesAsync(TArray<FBlenderBridgePendingMessage> Messages)

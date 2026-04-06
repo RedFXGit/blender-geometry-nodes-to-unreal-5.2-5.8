@@ -216,6 +216,13 @@ bool FBlenderBridgeSessionManager::CreateSession()
         return false;
     }
 
+    if (Session.IsValid() && SessionState == EBlenderBridgeConnectionState::Error)
+    {
+        LastSessionMessage = TEXT("Restarting the global Blender session after the previous error.");
+        RestartSession();
+        return Session.IsValid();
+    }
+
     if (Session.IsValid() && SessionState != EBlenderBridgeConnectionState::Disconnected)
     {
         LastSessionMessage = TEXT("Global Blender session is already running.");
@@ -335,7 +342,8 @@ void FBlenderBridgeSessionManager::NotifyTargetChanged(UBlenderBridgeComponent* 
         return;
     }
 
-    RequestDescribeTarget(Component, false, false);
+    Component->SetShowingBakedOutput(false);
+    RequestDescribeTarget(Component, false, true);
 }
 
 void FBlenderBridgeSessionManager::RefreshComponentSchema(UBlenderBridgeComponent* Component, const bool bForceReload)
@@ -636,7 +644,8 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             return;
         }
 
-        Component->ApplyDecodedMesh(DecodedMesh);
+        BlenderBridge::ParseCookedMeshMetadata(Message.Payload, DecodedMesh.MaterialSlots, DecodedMesh.Sections);
+        Component->ApplyDecodedMesh(MoveTemp(DecodedMesh));
         Component->SetBridgeStatus(
             EBlenderBridgeComponentStatus::Cooked,
             FString::Printf(TEXT("Applied bridge mesh from slot %u"), static_cast<uint32>(SlotNumber)));
@@ -730,7 +739,7 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
 
         if (Component->FindTargetDescriptor(Component->TargetId) == nullptr)
         {
-            if (SourceCache->Targets.Num() == 1)
+            if (!SourceCache->Targets.IsEmpty())
             {
                 Component->TargetId = SourceCache->Targets[0].TargetId;
             }

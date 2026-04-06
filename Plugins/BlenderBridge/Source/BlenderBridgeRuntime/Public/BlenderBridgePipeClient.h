@@ -7,7 +7,7 @@ class FBlenderBridgePipeClient final
 public:
     ~FBlenderBridgePipeClient();
 
-    bool Connect(const FString& PipeName, double TimeoutSeconds, const TAtomic<bool>* StopRequested = nullptr);
+    bool Connect(const FString& PipeName, double TimeoutSeconds, const TAtomic<bool>* StopRequested = nullptr, bool bLogTimeout = true);
     void Disconnect();
     bool IsConnected() const { return PipeHandle != nullptr; }
 

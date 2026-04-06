@@ -49,6 +49,8 @@ public:
 private:
     void StopInternal(bool bAllowCallbacks);
     void StartOnBackgroundThread();
+    bool WaitForPipeConnection();
+    void CleanupFailedStartup();
     void ListenLoop();
     void HandleMessageOnGameThread(const FBlenderBridgeJsonMessage& Message);
     bool SendMessage(EBlenderBridgeMessageType Type, const TSharedRef<FJsonObject>& Payload);

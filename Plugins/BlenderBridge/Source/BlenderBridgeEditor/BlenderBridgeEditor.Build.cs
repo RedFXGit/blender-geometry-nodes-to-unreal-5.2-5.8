@@ -19,10 +19,18 @@ public class BlenderBridgeEditor : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new[]
             {
+                "AssetRegistry",
+                "AssetTools",
+                "AssetDefinition",
                 "BlenderBridgeRuntime",
+                "MaterialEditor",
+                "MeshDescription",
+                "MeshConversion",
                 "PropertyEditor",
+                "Projects",
                 "Slate",
                 "SlateCore",
+                "StaticMeshDescription",
                 "StructUtilsEditor",
                 "ToolMenus",
                 "UnrealEd"

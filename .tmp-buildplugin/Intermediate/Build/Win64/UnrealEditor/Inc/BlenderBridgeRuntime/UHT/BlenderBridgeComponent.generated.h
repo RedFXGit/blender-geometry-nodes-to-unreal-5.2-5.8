@@ -16,19 +16,40 @@
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 
+// ********** Begin ScriptStruct FBlenderBridgeMaterialOverride ************************************
+struct Z_Construct_UScriptStruct_FBlenderBridgeMaterialOverride_Statics;
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_25_GENERATED_BODY \
+	friend struct ::Z_Construct_UScriptStruct_FBlenderBridgeMaterialOverride_Statics; \
+	BLENDERBRIDGERUNTIME_API static class UScriptStruct* StaticStruct();
+
+
+struct FBlenderBridgeMaterialOverride;
+// ********** End ScriptStruct FBlenderBridgeMaterialOverride **************************************
+
+// ********** Begin ScriptStruct FBlenderBridgeGeneratedMaterialReference **************************
+struct Z_Construct_UScriptStruct_FBlenderBridgeGeneratedMaterialReference_Statics;
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_43_GENERATED_BODY \
+	friend struct ::Z_Construct_UScriptStruct_FBlenderBridgeGeneratedMaterialReference_Statics; \
+	BLENDERBRIDGERUNTIME_API static class UScriptStruct* StaticStruct();
+
+
+struct FBlenderBridgeGeneratedMaterialReference;
+// ********** End ScriptStruct FBlenderBridgeGeneratedMaterialReference ****************************
+
 // ********** Begin Class UBlenderBridgeComponent **************************************************
-#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_RPC_WRAPPERS_NO_PURE_DECLS \
-	DECLARE_FUNCTION(execPushCurrentInputs); \
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_RPC_WRAPPERS_NO_PURE_DECLS \
+	DECLARE_FUNCTION(execGetAvailableTargetOptions); \
+	DECLARE_FUNCTION(execDeleteBakedOutput); \
+	DECLARE_FUNCTION(execSelectBakedOutput); \
+	DECLARE_FUNCTION(execBakeToStaticMesh); \
 	DECLARE_FUNCTION(execRequestCook); \
-	DECLARE_FUNCTION(execRefreshInputSchema); \
-	DECLARE_FUNCTION(execStopBridge); \
-	DECLARE_FUNCTION(execStartBridge);
+	DECLARE_FUNCTION(execRefreshInputSchema);
 
 
 struct Z_Construct_UClass_UBlenderBridgeComponent_Statics;
 BLENDERBRIDGERUNTIME_API UClass* Z_Construct_UClass_UBlenderBridgeComponent_NoRegister();
 
-#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_INCLASS_NO_PURE_DECLS \
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_INCLASS_NO_PURE_DECLS \
 private: \
 	static void StaticRegisterNativesUBlenderBridgeComponent(); \
 	friend struct ::Z_Construct_UClass_UBlenderBridgeComponent_Statics; \
@@ -39,7 +60,7 @@ public: \
 	DECLARE_SERIALIZER(UBlenderBridgeComponent)
 
 
-#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_ENHANCED_CONSTRUCTORS \
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_ENHANCED_CONSTRUCTORS \
 	/** Deleted move- and copy-constructors, should never be used */ \
 	UBlenderBridgeComponent(UBlenderBridgeComponent&&) = delete; \
 	UBlenderBridgeComponent(const UBlenderBridgeComponent&) = delete; \
@@ -49,13 +70,13 @@ public: \
 	NO_API virtual ~UBlenderBridgeComponent();
 
 
-#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_15_PROLOG
-#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_GENERATED_BODY \
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_58_PROLOG
+#define FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_GENERATED_BODY \
 PRAGMA_DISABLE_DEPRECATION_WARNINGS \
 public: \
-	FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_RPC_WRAPPERS_NO_PURE_DECLS \
-	FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_INCLASS_NO_PURE_DECLS \
-	FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_18_ENHANCED_CONSTRUCTORS \
+	FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_RPC_WRAPPERS_NO_PURE_DECLS \
+	FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_INCLASS_NO_PURE_DECLS \
+	FID_Users_Lassiter_Documents_GitHub_blender_unreal_bridge__tmp_buildplugin_HostProject_Plugins_BlenderBridge_Source_BlenderBridgeRuntime_Public_BlenderBridgeComponent_h_61_ENHANCED_CONSTRUCTORS \
 private: \
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 

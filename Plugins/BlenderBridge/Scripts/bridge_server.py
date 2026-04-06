@@ -705,6 +705,45 @@ class BridgeWorker:
         except (AttributeError, TypeError, ValueError):
             return None
 
+    def make_material_slot_id(self, slot_name: str, material_name: str, slot_index: int) -> str:
+        slot_name = str(slot_name or "").strip()
+        material_name = str(material_name or "").strip()
+        if slot_name and material_name and slot_name != material_name:
+            return f"{slot_name}|{material_name}"
+        if slot_name:
+            return slot_name
+        if material_name:
+            return material_name
+        return f"MaterialSlot_{slot_index}"
+
+    def build_material_slot_descriptors_for_mesh(self, mesh) -> list[dict[str, object]]:
+        material_slots: list[dict[str, object]] = []
+        mesh_materials = list(getattr(mesh, "materials", []) or [])
+        for slot_index, material in enumerate(mesh_materials):
+            material_name = ""
+            if material is not None:
+                material_name = str(getattr(material, "name", "") or "").strip()
+
+            slot_name = material_name or f"MaterialSlot_{slot_index}"
+            material_slots.append(
+                {
+                    "slot_id": self.make_material_slot_id(slot_name, material_name, slot_index),
+                    "slot_name": slot_name,
+                    "material_name": material_name or slot_name,
+                }
+            )
+
+        if not material_slots:
+            material_slots.append(
+                {
+                    "slot_id": "Default",
+                    "slot_name": "Default",
+                    "material_name": "Default",
+                }
+            )
+
+        return material_slots
+
     def extract_local_render_buffers_for_mesh(self, mesh):
         mesh.calc_loop_triangles()
         if hasattr(mesh, "calc_normals_split"):
@@ -725,6 +764,14 @@ class BridgeWorker:
         triangle_loop_indices = np.empty(triangle_count * 3, dtype=np.int32)
         mesh.loop_triangles.foreach_get("loops", triangle_loop_indices)
         triangle_loop_indices = triangle_loop_indices.reshape(-1, 3)
+
+        material_slots = self.build_material_slot_descriptors_for_mesh(mesh)
+        triangle_material_indices = np.empty(triangle_count, dtype=np.int32)
+        mesh.loop_triangles.foreach_get("material_index", triangle_material_indices)
+        if len(material_slots) == 1:
+            triangle_material_indices.fill(0)
+        else:
+            triangle_material_indices = np.clip(triangle_material_indices, 0, len(material_slots) - 1)
 
         positions = vertex_coords[triangle_vertex_indices].astype(np.float32, copy=True)
 
@@ -751,7 +798,13 @@ class BridgeWorker:
         packed_positions = np.ascontiguousarray(positions.reshape(render_vertex_count, 3), dtype=np.float32)
         packed_normals = np.ascontiguousarray(normals.reshape(render_vertex_count, 3), dtype=np.float32)
         packed_uv0 = np.ascontiguousarray(uv0.reshape(render_vertex_count, 2), dtype=np.float32)
-        return packed_positions, packed_normals, packed_uv0
+        return (
+            packed_positions,
+            packed_normals,
+            packed_uv0,
+            np.ascontiguousarray(triangle_material_indices, dtype=np.int32),
+            material_slots,
+        )
 
     def transform_render_buffers(self, positions, normals, uv0, transform_matrix, convert_to_unreal: bool):
         transformed_positions = np.array(positions, dtype=np.float32, copy=True)
@@ -779,6 +832,127 @@ class BridgeWorker:
             np.ascontiguousarray(transformed_positions, dtype=np.float32),
             np.ascontiguousarray(transformed_normals, dtype=np.float32),
             np.ascontiguousarray(transformed_uv0, dtype=np.float32),
+        )
+
+    def transform_render_part(self, render_part, transform_matrix, convert_to_unreal: bool):
+        transformed_positions, transformed_normals, transformed_uv0 = self.transform_render_buffers(
+            render_part[0],
+            render_part[1],
+            render_part[2],
+            transform_matrix,
+            convert_to_unreal,
+        )
+        return (
+            transformed_positions,
+            transformed_normals,
+            transformed_uv0,
+            np.array(render_part[3], dtype=np.int32, copy=True),
+            [dict(slot) for slot in render_part[4]],
+        )
+
+    def merge_render_parts(self, render_parts):
+        ordered_slot_keys: list[tuple[str, str, str]] = []
+        slot_metadata_by_key: dict[tuple[str, str, str], dict[str, object]] = {}
+        slot_chunks: dict[tuple[str, str, str], list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+
+        for render_part in render_parts:
+            positions, normals, uv0, triangle_material_indices, material_slots = render_part
+            if positions.size == 0:
+                continue
+
+            triangle_positions = positions.reshape(-1, 3, 3)
+            triangle_normals = normals.reshape(-1, 3, 3)
+            triangle_uv0 = uv0.reshape(-1, 3, 2)
+            normalized_material_indices = np.array(triangle_material_indices, dtype=np.int32, copy=False)
+
+            if normalized_material_indices.shape[0] != triangle_positions.shape[0]:
+                raise RuntimeError("Triangle material index count does not match extracted triangle buffers")
+
+            for slot_index, slot in enumerate(material_slots):
+                slot_name = str(slot.get("slot_name") or "").strip()
+                material_name = str(slot.get("material_name") or "").strip()
+                slot_id = str(slot.get("slot_id") or self.make_material_slot_id(slot_name, material_name, slot_index))
+                slot_key = (slot_id, slot_name, material_name)
+                if slot_key not in slot_metadata_by_key:
+                    ordered_slot_keys.append(slot_key)
+                    slot_metadata_by_key[slot_key] = {
+                        "slot_id": slot_id,
+                        "slot_name": slot_name or slot_id,
+                        "material_name": material_name or slot_name or slot_id,
+                    }
+
+                triangle_mask = normalized_material_indices == slot_index
+                if not np.any(triangle_mask):
+                    continue
+
+                slot_chunks.setdefault(slot_key, []).append(
+                    (
+                        np.ascontiguousarray(triangle_positions[triangle_mask].reshape(-1, 3), dtype=np.float32),
+                        np.ascontiguousarray(triangle_normals[triangle_mask].reshape(-1, 3), dtype=np.float32),
+                        np.ascontiguousarray(triangle_uv0[triangle_mask].reshape(-1, 2), dtype=np.float32),
+                    )
+                )
+
+        if not ordered_slot_keys:
+            return None
+
+        merged_positions_parts = []
+        merged_normals_parts = []
+        merged_uv0_parts = []
+        merged_indices_parts = []
+        material_slot_descriptors: list[dict[str, object]] = []
+        section_descriptors: list[dict[str, object]] = []
+
+        vertex_offset = 0
+        index_offset = 0
+        section_index = 0
+
+        for slot_key in ordered_slot_keys:
+            chunks = slot_chunks.get(slot_key)
+            if not chunks:
+                continue
+
+            section_positions = np.concatenate([chunk[0] for chunk in chunks], axis=0)
+            section_normals = np.concatenate([chunk[1] for chunk in chunks], axis=0)
+            section_uv0 = np.concatenate([chunk[2] for chunk in chunks], axis=0)
+            section_vertex_count = int(section_positions.shape[0])
+            section_index_count = section_vertex_count
+
+            merged_positions_parts.append(section_positions)
+            merged_normals_parts.append(section_normals)
+            merged_uv0_parts.append(section_uv0)
+            merged_indices_parts.append(np.arange(vertex_offset, vertex_offset + section_vertex_count, dtype=np.uint32))
+
+            slot_metadata = dict(slot_metadata_by_key[slot_key])
+            slot_metadata["section_index"] = section_index
+            material_slot_descriptors.append(slot_metadata)
+            section_descriptors.append(
+                {
+                    "section_index": section_index,
+                    "slot_id": slot_metadata["slot_id"],
+                    "slot_name": slot_metadata["slot_name"],
+                    "material_name": slot_metadata["material_name"],
+                    "first_vertex": vertex_offset,
+                    "vertex_count": section_vertex_count,
+                    "first_index": index_offset,
+                    "index_count": section_index_count,
+                }
+            )
+
+            vertex_offset += section_vertex_count
+            index_offset += section_index_count
+            section_index += 1
+
+        if not merged_positions_parts:
+            return None
+
+        return (
+            np.concatenate(merged_positions_parts, axis=0),
+            np.concatenate(merged_normals_parts, axis=0),
+            np.concatenate(merged_uv0_parts, axis=0),
+            np.concatenate(merged_indices_parts, axis=0),
+            material_slot_descriptors,
+            section_descriptors,
         )
 
     def build_local_render_parts_from_reference(self, reference, depsgraph, reference_cache: dict, recursion_depth: int):
@@ -866,15 +1040,7 @@ class BridgeWorker:
                 recursion_depth + 1,
             )
             for reference_part in reference_parts:
-                render_parts.append(
-                    self.transform_render_buffers(
-                        reference_part[0],
-                        reference_part[1],
-                        reference_part[2],
-                        instance_transform,
-                        convert_to_unreal=False,
-                    )
-                )
+                render_parts.append(self.transform_render_part(reference_part, instance_transform, convert_to_unreal=False))
 
         return render_parts
 
@@ -898,26 +1064,16 @@ class BridgeWorker:
             return None, None
 
         world_matrix = target_object.matrix_world.copy()
-        world_render_parts = [
-            self.transform_render_buffers(
-                render_part[0],
-                render_part[1],
-                render_part[2],
-                world_matrix,
-                convert_to_unreal=True,
-            )
-            for render_part in local_render_parts
-        ]
-
-        merged_positions = np.concatenate([render_part[0] for render_part in world_render_parts], axis=0)
-        merged_normals = np.concatenate([render_part[1] for render_part in world_render_parts], axis=0)
-        merged_uv0 = np.concatenate([render_part[2] for render_part in world_render_parts], axis=0)
+        world_render_parts = [self.transform_render_part(render_part, world_matrix, convert_to_unreal=True) for render_part in local_render_parts]
+        merged_buffers = self.merge_render_parts(world_render_parts)
+        if merged_buffers is None:
+            return None, None
 
         cooked_target_label = target_object.name
         if instance_count > 0:
             cooked_target_label = f"{target_object.name} ({instance_count} GN instances)"
 
-        return (merged_positions, merged_normals, merged_uv0), cooked_target_label
+        return merged_buffers, cooked_target_label
 
     def extract_render_buffers_for_object(self, target_object, depsgraph):
         evaluated_object = target_object.evaluated_get(depsgraph)
@@ -931,13 +1087,12 @@ class BridgeWorker:
             if extracted_buffers is None:
                 return None
 
-            return self.transform_render_buffers(
-                extracted_buffers[0],
-                extracted_buffers[1],
-                extracted_buffers[2],
+            transformed_part = self.transform_render_part(
+                extracted_buffers,
                 evaluated_object.matrix_world.copy(),
                 convert_to_unreal=True,
             )
+            return self.merge_render_parts([transformed_part])
         finally:
             evaluated_object.to_mesh_clear()
 
@@ -1044,7 +1199,9 @@ class BridgeWorker:
         merged_positions = extracted_buffers[0]
         merged_normals = extracted_buffers[1]
         merged_uv0 = extracted_buffers[2]
-        merged_indices = np.arange(merged_positions.shape[0], dtype=np.uint32)
+        merged_indices = extracted_buffers[3]
+        material_slots = extracted_buffers[4]
+        section_descriptors = extracted_buffers[5]
 
         slot_index = self.write_mesh_to_shared_memory(
             merged_positions,
@@ -1069,6 +1226,8 @@ class BridgeWorker:
             index_count=int(merged_indices.shape[0]),
             object_name=cooked_target_label,
             object_count=1,
+            material_slots=material_slots,
+            sections=section_descriptors,
         )
 
     def handle_message(self, message: dict) -> bool:

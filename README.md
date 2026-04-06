@@ -11,6 +11,8 @@ Today it can:
 - display the result in Unreal with `UProceduralMeshComponent`
 - keep multiple `.blend` sources loaded in one Blender process
 - import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset
+- present that asset in the Content Browser as a custom `Blender Bridge Source` type instead of a generic data asset
+- drag a `BlenderBridgeSource` into the level to spawn a configured `BlenderBridgeActor`
 - discover multiple Geometry Nodes targets per `.blend`
 - reflect and drive one selected Geometry Nodes target per actor, including enums and Blender interface panel groupings
 
@@ -45,15 +47,15 @@ Today it can:
 4. Confirm `Blender Executable Path` is correct.
    Tip: if it is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
 5. Use `Tools > Blender Bridge > Create Session` to launch the global Blender worker.
-6. Add a [UBlenderBridgeComponent](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h) to an actor.
-7. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
+6. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
    Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured `BlenderBridgeSource` asset for it.
-8. Assign that source asset to the component.
-9. If the source exposes multiple GN targets, choose one in `Target`.
-10. Click `Refresh Input Schema` if needed and wait for the schema to populate.
-11. Edit reflected values in `Input Values`.
-12. Click `Request Cook`.
-13. Confirm the preview mesh updates in the Unreal viewport.
+7. Drag that source asset from the Content Browser into the level to spawn an [ABlenderBridgeActor](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeActor.h) with its bridge component already configured.
+   Tip: if you prefer, you can still add a [UBlenderBridgeComponent](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h) to any actor manually and assign the source yourself.
+8. If the source exposes multiple GN targets, choose one in `Target`.
+9. Click `Refresh Input Schema` if needed and wait for the schema to populate.
+10. Edit reflected values in `Input Values`.
+11. Click `Request Cook`.
+12. Confirm the preview mesh updates in the Unreal viewport.
 
 ## Geometry Nodes Notes
 
@@ -90,6 +92,7 @@ Practical note:
 
 - Session controls are global and live under `Tools > Blender Bridge`.
 - Components no longer own Blender worker processes.
+- Dragging a `BlenderBridgeSource` into the level now spawns a dedicated `BlenderBridgeActor` instead of requiring a hand-built actor/component setup.
 - Multiple actors can point at the same source and target while keeping separate `Input Values` in Unreal.
 - Multiple sources can stay resident in one Blender worker process.
 - The current behavior is editor-only. Packaged/runtime bridge execution is intentionally unsupported in this first shared-session pass.
@@ -97,7 +100,7 @@ Practical note:
 ## Intentional Gaps
 
 - No in-place shared-memory remap without worker restart yet.
-- No richer editor customization beyond the current `.blend` import factory and grouped input UI yet.
+- No richer editor customization beyond the current `.blend` import factory, drag-to-level actor factory, and grouped input UI yet.
 - No packaged-runtime bridge execution yet.
 - No custom render proxy or RDG path yet.
 

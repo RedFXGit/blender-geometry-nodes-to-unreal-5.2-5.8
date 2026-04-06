@@ -13,7 +13,11 @@ FBlenderBridgePipeClient::~FBlenderBridgePipeClient()
     Disconnect();
 }
 
-bool FBlenderBridgePipeClient::Connect(const FString& PipeName, const double TimeoutSeconds, const TAtomic<bool>* StopRequested)
+bool FBlenderBridgePipeClient::Connect(
+    const FString& PipeName,
+    const double TimeoutSeconds,
+    const TAtomic<bool>* StopRequested,
+    const bool bLogTimeout)
 {
 #if !BLENDER_BRIDGE_WITH_WINDOWS_IPC
     return false;
@@ -53,7 +57,10 @@ bool FBlenderBridgePipeClient::Connect(const FString& PipeName, const double Tim
         FPlatformProcess::Sleep(0.05f);
     }
 
-    UE_LOG(LogBlenderBridge, Error, TEXT("Timed out connecting to named pipe %s"), *PipePath);
+    if (bLogTimeout)
+    {
+        UE_LOG(LogBlenderBridge, Error, TEXT("Timed out connecting to named pipe %s"), *PipePath);
+    }
     return false;
 #endif
 }

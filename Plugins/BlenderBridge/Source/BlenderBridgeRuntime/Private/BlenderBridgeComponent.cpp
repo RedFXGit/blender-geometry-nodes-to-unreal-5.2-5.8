@@ -5,6 +5,8 @@
 #include "BlenderBridgeSource.h"
 #include "Engine/UserDefinedEnum.h"
 #include "GameFramework/Actor.h"
+#include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "ProceduralMeshComponent.h"
@@ -160,6 +162,9 @@ void UBlenderBridgeComponent::OnRegister()
     {
         ConnectionState = FBlenderBridgeRuntimeModule::Get().GetSessionManager().GetConnectionState();
     }
+
+    UpdatePreviewVisibility();
+    UpdateBakedOutputVisibility();
 }
 
 void UBlenderBridgeComponent::RefreshInputSchema()
@@ -169,7 +174,64 @@ void UBlenderBridgeComponent::RefreshInputSchema()
 
 void UBlenderBridgeComponent::RequestCook()
 {
+    SetShowingBakedOutput(false);
     FBlenderBridgeRuntimeModule::Get().GetSessionManager().RequestCook(this);
+}
+
+void UBlenderBridgeComponent::BakeToStaticMesh()
+{
+    if (!GIsEditor)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Baking is only supported in the Unreal Editor."));
+        return;
+    }
+
+    if (!HasCookedMesh())
+    {
+        bPendingBakeAfterCook = true;
+        SetBridgeStatus(EBlenderBridgeComponentStatus::CookQueued, TEXT("No cooked mesh is available yet. Requesting a cook before baking."));
+        RequestCook();
+        return;
+    }
+
+    if (FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(this))
+    {
+        bPendingBakeAfterCook = false;
+        return;
+    }
+
+    if (ComponentStatus != EBlenderBridgeComponentStatus::Error)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to bake the bridge output to a static mesh."));
+    }
+}
+
+void UBlenderBridgeComponent::SelectBakedOutput()
+{
+    if (!GIsEditor)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Selecting baked outputs is only supported in the Unreal Editor."));
+        return;
+    }
+
+    if (!FBlenderBridgeRuntimeModule::Get().ExecuteSelectBakedOutput(this))
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("There is no baked bridge output to select."));
+    }
+}
+
+void UBlenderBridgeComponent::DeleteBakedOutput()
+{
+    if (!GIsEditor)
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Deleting baked outputs is only supported in the Unreal Editor."));
+        return;
+    }
+
+    if (!FBlenderBridgeRuntimeModule::Get().ExecuteDeleteBakedOutput(this))
+    {
+        SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("There is no baked bridge output to delete."));
+    }
 }
 
 TArray<FString> UBlenderBridgeComponent::GetAvailableTargetOptions() const
@@ -192,6 +254,7 @@ TArray<FString> UBlenderBridgeComponent::GetAvailableTargetOptions() const
 
 void UBlenderBridgeComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
 {
+    CancelPendingBakedOutputVisibilitySwap();
     ResetBridgeData(false);
     Super::OnComponentDestroyed(bDestroyingHierarchy);
 }
@@ -213,6 +276,18 @@ void UBlenderBridgeComponent::PostEditChangeProperty(FPropertyChangedEvent& Prop
     if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, TargetId))
     {
         SessionManager.NotifyTargetChanged(this);
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, MaterialOverrides))
+    {
+        ApplyPreviewMaterials();
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, bHidePreviewAfterBake))
+    {
+        UpdatePreviewVisibility();
         return;
     }
 
@@ -242,9 +317,10 @@ void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
     PreviewMeshComponent->SetupAttachment(this);
     PreviewMeshComponent->SetMobility(EComponentMobility::Movable);
     PreviewMeshComponent->RegisterComponent();
+    UpdatePreviewVisibility();
 }
 
-void UBlenderBridgeComponent::ApplyDecodedMesh(const FBridgeDecodedMesh& DecodedMesh)
+void UBlenderBridgeComponent::ApplyDecodedMesh(FBridgeDecodedMesh&& DecodedMesh)
 {
     EnsurePreviewMeshComponent();
     if (PreviewMeshComponent == nullptr)
@@ -253,18 +329,98 @@ void UBlenderBridgeComponent::ApplyDecodedMesh(const FBridgeDecodedMesh& Decoded
         return;
     }
 
+    LastCookedMesh = MoveTemp(DecodedMesh);
+    bHasValidCookedMesh = LastCookedMesh.Positions.Num() > 0 && LastCookedMesh.Triangles.Num() > 0;
+    LastCookedMaterialSlots = LastCookedMesh.MaterialSlots;
+
+    if (LastCookedMesh.Sections.IsEmpty() && bHasValidCookedMesh)
+    {
+        FBridgeMaterialSlotDescriptor DefaultSlot;
+        DefaultSlot.SlotId = TEXT("Default");
+        DefaultSlot.SlotName = TEXT("Default");
+        DefaultSlot.BlenderMaterialName = TEXT("Default");
+        DefaultSlot.SectionIndex = 0;
+        LastCookedMesh.MaterialSlots = { DefaultSlot };
+        LastCookedMaterialSlots = LastCookedMesh.MaterialSlots;
+
+        FBridgeMeshSectionDescriptor DefaultSection;
+        DefaultSection.SectionIndex = 0;
+        DefaultSection.FirstVertex = 0;
+        DefaultSection.VertexCount = LastCookedMesh.Positions.Num();
+        DefaultSection.FirstIndex = 0;
+        DefaultSection.IndexCount = LastCookedMesh.Triangles.Num();
+        DefaultSection.SlotId = DefaultSlot.SlotId;
+        DefaultSection.SlotName = DefaultSlot.SlotName;
+        DefaultSection.BlenderMaterialName = DefaultSlot.BlenderMaterialName;
+        LastCookedMesh.Sections = { DefaultSection };
+    }
+
+    SyncMaterialOverridesFromCookedSlots();
+
+    PreviewMeshComponent->ClearAllMeshSections();
+
     TArray<FColor> VertexColors;
     TArray<FProcMeshTangent> Tangents;
-    PreviewMeshComponent->ClearAllMeshSections();
-    PreviewMeshComponent->CreateMeshSection(
-        0,
-        DecodedMesh.Positions,
-        DecodedMesh.Triangles,
-        DecodedMesh.Normals,
-        DecodedMesh.UV0,
-        VertexColors,
-        Tangents,
-        false);
+    for (const FBridgeMeshSectionDescriptor& Section : LastCookedMesh.Sections)
+    {
+        const bool bHasValidVertexRange =
+            Section.FirstVertex >= 0 &&
+            Section.VertexCount > 0 &&
+            Section.FirstVertex + Section.VertexCount <= LastCookedMesh.Positions.Num() &&
+            Section.FirstVertex + Section.VertexCount <= LastCookedMesh.Normals.Num() &&
+            Section.FirstVertex + Section.VertexCount <= LastCookedMesh.UV0.Num();
+
+        const bool bHasValidIndexRange =
+            Section.FirstIndex >= 0 &&
+            Section.IndexCount >= 3 &&
+            Section.FirstIndex + Section.IndexCount <= LastCookedMesh.Triangles.Num();
+
+        if (!bHasValidVertexRange || !bHasValidIndexRange)
+        {
+            continue;
+        }
+
+        TArray<FVector> SectionPositions;
+        TArray<FVector> SectionNormals;
+        TArray<FVector2D> SectionUv0;
+        TArray<int32> SectionTriangles;
+        SectionPositions.Reserve(Section.VertexCount);
+        SectionNormals.Reserve(Section.VertexCount);
+        SectionUv0.Reserve(Section.VertexCount);
+        SectionTriangles.Reserve(Section.IndexCount);
+
+        for (int32 VertexIndex = 0; VertexIndex < Section.VertexCount; ++VertexIndex)
+        {
+            const int32 SourceVertexIndex = Section.FirstVertex + VertexIndex;
+            SectionPositions.Add(LastCookedMesh.Positions[SourceVertexIndex]);
+            SectionNormals.Add(LastCookedMesh.Normals[SourceVertexIndex]);
+            SectionUv0.Add(LastCookedMesh.UV0[SourceVertexIndex]);
+        }
+
+        for (int32 IndexOffset = 0; IndexOffset < Section.IndexCount; ++IndexOffset)
+        {
+            const int32 SourceTriangleIndex = LastCookedMesh.Triangles[Section.FirstIndex + IndexOffset];
+            SectionTriangles.Add(SourceTriangleIndex - Section.FirstVertex);
+        }
+
+        PreviewMeshComponent->CreateMeshSection(
+            Section.SectionIndex,
+            SectionPositions,
+            SectionTriangles,
+            SectionNormals,
+            SectionUv0,
+            VertexColors,
+            Tangents,
+            false);
+    }
+
+    ApplyPreviewMaterials();
+    SetShowingBakedOutput(false);
+
+    if (bPendingBakeAfterCook)
+    {
+        BakeToStaticMesh();
+    }
 }
 
 UUserDefinedEnum* UBlenderBridgeComponent::GetOrCreateRuntimeEnum(const FBridgeInputSchema& Entry)
@@ -436,6 +592,7 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
         {
             Descriptor.SetMetaData(TEXT("ClampMin"), ::LexToString(Entry.MinNumericValue));
             Descriptor.SetMetaData(TEXT("ClampMax"), ::LexToString(Entry.MaxNumericValue));
+            Descriptor.SetMetaData(TEXT("Delta"), Entry.Type == EBlenderBridgeInputType::Integer ? TEXT("1") : TEXT("0.01"));
         }
 #endif
         Descriptors.Add(MoveTemp(Descriptor));
@@ -532,6 +689,8 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
 
 void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
 {
+    CancelPendingBakedOutputVisibilitySwap();
+
     if (PreviewMeshComponent != nullptr)
     {
         PreviewMeshComponent->ClearAllMeshSections();
@@ -541,6 +700,11 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     SchemaTargetId.Reset();
     InputSchema.Reset();
     TargetDisplayLabel.Reset();
+    LastCookedMaterialSlots.Reset();
+    LastCookedMesh.Reset();
+    bHasValidCookedMesh = false;
+    bPendingBakeAfterCook = false;
+    bShowingBakedOutput = false;
     RuntimeInputEnums.Reset();
     RuntimeInputEnumHashes.Reset();
     InputValues = FInstancedPropertyBag();
@@ -548,7 +712,10 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     if (bClearTargetSelection)
     {
         TargetId.Reset();
+        MaterialOverrides.Reset();
     }
+
+    UpdatePreviewVisibility();
 }
 
 FString UBlenderBridgeComponent::GetSourceHandle() const
@@ -586,4 +753,132 @@ void UBlenderBridgeComponent::SetBridgeStatus(const EBlenderBridgeComponentStatu
 {
     ComponentStatus = NewStatus;
     LastStatusMessage = Message;
+}
+
+void UBlenderBridgeComponent::SyncMaterialOverridesFromCookedSlots()
+{
+    TMap<FString, TObjectPtr<UMaterialInterface>> ExistingOverrides;
+    for (const FBlenderBridgeMaterialOverride& Entry : MaterialOverrides)
+    {
+        if (!Entry.SlotId.IsEmpty())
+        {
+            ExistingOverrides.Add(Entry.SlotId, Entry.Material);
+        }
+    }
+
+    TArray<FBlenderBridgeMaterialOverride> UpdatedOverrides;
+    UpdatedOverrides.Reserve(LastCookedMaterialSlots.Num());
+    for (const FBridgeMaterialSlotDescriptor& Slot : LastCookedMaterialSlots)
+    {
+        FBlenderBridgeMaterialOverride OverrideEntry;
+        OverrideEntry.SlotId = Slot.SlotId;
+        OverrideEntry.SlotName = Slot.SlotName;
+        OverrideEntry.BlenderMaterialName = Slot.BlenderMaterialName;
+        if (const TObjectPtr<UMaterialInterface>* ExistingMaterial = ExistingOverrides.Find(Slot.SlotId))
+        {
+            OverrideEntry.Material = *ExistingMaterial;
+        }
+
+        UpdatedOverrides.Add(MoveTemp(OverrideEntry));
+    }
+
+    MaterialOverrides = MoveTemp(UpdatedOverrides);
+}
+
+void UBlenderBridgeComponent::QueueShowBakedOutputOnNextTick()
+{
+    CancelPendingBakedOutputVisibilitySwap();
+
+    PendingShowBakedOutputTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateWeakLambda(
+            this,
+            [this](const float)
+            {
+                PendingShowBakedOutputTickerHandle.Reset();
+                SetShowingBakedOutput(true);
+                return false;
+            }),
+        0.0f);
+}
+
+void UBlenderBridgeComponent::CancelPendingBakedOutputVisibilitySwap()
+{
+    if (PendingShowBakedOutputTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(PendingShowBakedOutputTickerHandle);
+        PendingShowBakedOutputTickerHandle.Reset();
+    }
+}
+
+void UBlenderBridgeComponent::SetShowingBakedOutput(const bool bInShowingBakedOutput)
+{
+    if (!bInShowingBakedOutput)
+    {
+        CancelPendingBakedOutputVisibilitySwap();
+    }
+
+    bShowingBakedOutput = bInShowingBakedOutput;
+    UpdatePreviewVisibility();
+    UpdateBakedOutputVisibility();
+}
+
+void UBlenderBridgeComponent::UpdatePreviewVisibility()
+{
+    if (PreviewMeshComponent == nullptr)
+    {
+        return;
+    }
+
+    const bool bShouldHidePreview = bHidePreviewAfterBake && bShowingBakedOutput && BakedActor.IsValid();
+    PreviewMeshComponent->SetVisibility(!bShouldHidePreview);
+    PreviewMeshComponent->SetHiddenInGame(bShouldHidePreview);
+}
+
+void UBlenderBridgeComponent::UpdateBakedOutputVisibility()
+{
+    if (AStaticMeshActor* BakedStaticMeshActor = BakedActor.Get())
+    {
+        const bool bShouldShowBakedOutput = bShowingBakedOutput;
+#if WITH_EDITOR
+        BakedStaticMeshActor->SetIsTemporarilyHiddenInEditor(!bShouldShowBakedOutput);
+#endif
+        BakedStaticMeshActor->SetActorHiddenInGame(!bShouldShowBakedOutput);
+
+        if (UStaticMeshComponent* StaticMeshComponent = BakedStaticMeshActor->GetStaticMeshComponent())
+        {
+            StaticMeshComponent->SetVisibility(bShouldShowBakedOutput);
+            StaticMeshComponent->SetHiddenInGame(!bShouldShowBakedOutput);
+        }
+    }
+}
+
+void UBlenderBridgeComponent::ApplyPreviewMaterials()
+{
+    if (PreviewMeshComponent == nullptr)
+    {
+        return;
+    }
+
+    for (const FBridgeMeshSectionDescriptor& Section : LastCookedMesh.Sections)
+    {
+        PreviewMeshComponent->SetMaterial(Section.SectionIndex, FindOverrideMaterialBySlotId(Section.SlotId));
+    }
+}
+
+UMaterialInterface* UBlenderBridgeComponent::FindOverrideMaterialBySlotId(const FString& SlotId) const
+{
+    for (const FBlenderBridgeMaterialOverride& Entry : MaterialOverrides)
+    {
+        if (Entry.SlotId == SlotId)
+        {
+            return Entry.Material;
+        }
+    }
+
+    return nullptr;
+}
+
+bool UBlenderBridgeComponent::HasCookedMesh() const
+{
+    return bHasValidCookedMesh && LastCookedMesh.Positions.Num() > 0 && LastCookedMesh.Triangles.Num() > 0;
 }

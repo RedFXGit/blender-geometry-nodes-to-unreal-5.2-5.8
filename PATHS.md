@@ -30,6 +30,8 @@ This file captures the most relevant paths discovered so far for the current Ble
 - Runtime build file: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\BlenderBridgeRuntime.Build.cs`
 - Runtime module header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeRuntimeModule.h`
 - Runtime module source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeRuntimeModule.cpp`
+- Placeable actor header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeActor.h`
+- Placeable actor source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeActor.cpp`
 - Component header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h`
 - Component source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeComponent.cpp`
 - Session manager header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSessionManager.h`
@@ -49,6 +51,10 @@ This file captures the most relevant paths discovered so far for the current Ble
 - Shared memory header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSharedMemory.h`
 - Shared memory source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Private\BlenderBridgeSharedMemory.cpp`
 - Editor build file: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\BlenderBridgeEditor.Build.cs`
+- Actor factory header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Public\ActorFactoryBlenderBridgeSource.h`
+- Actor factory source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\ActorFactoryBlenderBridgeSource.cpp`
+- Asset definition header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\AssetDefinition_BlenderBridgeSource.h`
+- Asset definition source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\AssetDefinition_BlenderBridgeSource.cpp`
 - Editor module source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\BlenderBridgeEditorModule.cpp`
 - Property bag customization source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\BlenderBridgePropertyBagDetails.cpp`
 
@@ -88,6 +94,7 @@ This file captures the most relevant paths discovered so far for the current Ble
 
 - Unreal project setting location: `Edit > Project Settings > Plugins > Blender Bridge`
 - Global session menu location: `Tools > Blender Bridge`
+- Asset placement flow: `Import .blend -> BlenderBridgeSource -> drag source into level -> BlenderBridgeActor`
 - Auto-detected default Blender path on this machine: `C:\Program Files\Blender Foundation\Blender 5.1\blender.exe`
 
 ## Notes
