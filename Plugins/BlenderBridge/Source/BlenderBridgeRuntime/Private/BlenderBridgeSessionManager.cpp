@@ -920,7 +920,9 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
         return false;
     }
 
-    if (Component->SchemaTargetId != Component->TargetId || Component->InputSchema.IsEmpty())
+    // A target can legitimately expose zero editable inputs. Once we've described the
+    // currently selected target, we should still allow a cook with an empty values payload.
+    if (Component->SchemaTargetId != Component->TargetId)
     {
         return RequestDescribeTarget(Component, Component->SchemaTargetId == Component->TargetId, true);
     }

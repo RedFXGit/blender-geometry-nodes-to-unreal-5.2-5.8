@@ -24,6 +24,8 @@
 #include "StaticMeshAttributes.h"
 #include "UObject/Package.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogBlenderBridgeBake, Log, All);
+
 namespace
 {
     constexpr TCHAR PlaceholderParentMaterialName[] = TEXT("M_BlenderBridgePlaceholderParent");
@@ -291,6 +293,16 @@ namespace
         const FBridgeDecodedMesh& CookedMesh = Component->GetLastCookedMesh();
         Builder.ReserveNewVertices(CookedMesh.Positions.Num());
 
+        UE_LOG(
+            LogBlenderBridgeBake,
+            Log,
+            TEXT("Bake mesh description '%s': requested UV layers=1, mesh UV element channels=%d, vertex-instance UV channels=%d, vertices=%d, triangles=%d"),
+            *MeshAssetName,
+            MeshDescription.GetNumUVElementChannels(),
+            Attributes.GetVertexInstanceUVs().GetNumChannels(),
+            CookedMesh.Positions.Num(),
+            CookedMesh.Triangles.Num() / 3);
+
         TArray<FPolygonGroupID> PolygonGroups;
         PolygonGroups.Reserve(Component->LastCookedMaterialSlots.Num());
         for (const FBridgeMaterialSlotDescriptor& Slot : Component->LastCookedMaterialSlots)
@@ -350,6 +362,15 @@ namespace
         {
             return nullptr;
         }
+
+        UE_LOG(
+            LogBlenderBridgeBake,
+            Log,
+            TEXT("Built static mesh '%s': source UV channels=%d, built UV channels=%d, built tex coords=%d"),
+            *StaticMesh->GetPathName(),
+            MeshDescription.GetNumUVElementChannels(),
+            StaticMesh->GetNumUVChannels(0),
+            StaticMesh->GetNumTexCoords(0));
 
         StaticMesh->CreateBodySetup();
         if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
@@ -432,6 +453,7 @@ namespace
         return BakedActor;
     }
 }
+
 
 bool FBlenderBridgeBakeService::BakeComponent(UBlenderBridgeComponent* Component)
 {
