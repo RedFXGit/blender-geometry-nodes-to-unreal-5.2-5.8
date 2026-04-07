@@ -71,6 +71,7 @@ private:
     void HandleSessionLogMessage(const FString& Message);
 
     void RefreshAllComponentConnectionStates() const;
+    TMap<FString, FString> GatherSourcesToRestore() const;
     void ApplySourceCacheToComponents(const FString& SourceHandle, bool bRequestCookForPendingComponent, UBlenderBridgeComponent* PendingComponent);
     void ClearCachedTargetData(const FString& SourceHandle);
     bool QueueEnsureSourceLoadedRequest(

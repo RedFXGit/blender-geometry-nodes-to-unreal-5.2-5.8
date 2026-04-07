@@ -351,8 +351,17 @@ void FBlenderBridgeSessionManager::StopSession()
 bool FBlenderBridgeSessionManager::RestartSession()
 {
     const TArray<TWeakObjectPtr<UBlenderBridgeComponent>> RetryComponents = PendingCookRetryComponents;
+    TMap<FString, TWeakObjectPtr<UBlenderBridgeComponent>> WarmupPreviewComponents;
+    for (const TPair<FString, TWeakObjectPtr<UBlenderBridgeComponent>>& Entry : PendingWarmupPreviewComponents)
+    {
+        if (Entry.Value.IsValid())
+        {
+            WarmupPreviewComponents.Add(Entry.Key, Entry.Value);
+        }
+    }
     StopSession();
     PendingCookRetryComponents = RetryComponents;
+    PendingWarmupPreviewComponents = WarmupPreviewComponents;
     bRestoreSourcesAfterReconnect = true;
     StartSessionInternal();
     return Session.IsValid();
@@ -630,20 +639,10 @@ void FBlenderBridgeSessionManager::HandleSessionStateChanged(const EBlenderBridg
     {
         bRestoreSourcesAfterReconnect = false;
 
-        for (const TPair<FString, FSourceCache>& Entry : SourceCaches)
+        const TMap<FString, FString> SourcesToRestore = GatherSourcesToRestore();
+        for (const TPair<FString, FString>& Entry : SourcesToRestore)
         {
-            TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
-            const FString RequestId = MakeRequestId();
-            Payload->SetStringField(RequestIdFieldName, RequestId);
-            Payload->SetStringField(SourceHandleFieldName, Entry.Key);
-            Payload->SetStringField(BlendFileFieldName, Entry.Value.BlendFilePath);
-            Payload->SetBoolField(ForceReloadFieldName, false);
-
-            FPendingRequest PendingRequest;
-            PendingRequest.Kind = EBridgeManagerRequestKind::EnsureSourceLoaded;
-            PendingRequest.SourceHandle = Entry.Key;
-            PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
-            Session->QueueMessage(EBlenderBridgeMessageType::EnsureSourceLoaded, Payload);
+            QueueEnsureSourceLoadedRequest(Entry.Key, Entry.Value, nullptr, false, false);
         }
     }
 
@@ -654,6 +653,11 @@ void FBlenderBridgeSessionManager::HandleSessionStateChanged(const EBlenderBridg
 
         for (const TPair<FString, TWeakObjectPtr<UBlenderBridgeComponent>>& Entry : WarmupPreviewComponents)
         {
+            if (!Entry.Value.IsValid())
+            {
+                continue;
+            }
+
             QueueEnsureSourceLoadedRequest(Entry.Key, Entry.Key, Entry.Value.Get(), false, Entry.Value.IsValid());
         }
     }
@@ -859,6 +863,24 @@ void FBlenderBridgeSessionManager::RefreshAllComponentConnectionStates() const
     {
         Component->ConnectionState = SessionState;
     });
+}
+
+TMap<FString, FString> FBlenderBridgeSessionManager::GatherSourcesToRestore() const
+{
+    TMap<FString, FString> SourcesToRestore;
+
+    ForEachBridgeComponent([&SourcesToRestore](UBlenderBridgeComponent* Component)
+    {
+        const FString SourceHandle = Component->GetSourceHandle();
+        if (SourceHandle.IsEmpty())
+        {
+            return;
+        }
+
+        SourcesToRestore.FindOrAdd(SourceHandle, SourceHandle);
+    });
+
+    return SourcesToRestore;
 }
 
 void FBlenderBridgeSessionManager::ClearCachedTargetData(const FString& SourceHandle)
