@@ -39,9 +39,9 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 2. Copy `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge` into that project's `Plugins` folder.
 3. Open the project in Unreal and enable the `BlenderBridge` plugin if Unreal prompts for it.
 4. Restart the editor so the plugin compiles and loads.
-5. Open `Edit > Project Settings > Plugins > Blender Bridge` and confirm `Blender Executable Path`.
+5. Open `Edit > Project Settings > Plugins > Blender Bridge` and confirm `Automatically Start Session On Editor Launch` and `Blender Executable Path`.
    Note: if blank, the plugin should auto-detect the newest standard Blender install.
-6. Use `Tools > Blender Bridge > Create Session`.
+6. If auto-start is disabled, use `Tools > Blender Bridge > Create Session`.
 7. Drag a `.blend` file into the Content Browser and confirm Unreal creates a `BlenderBridgeSource` asset for it.
 8. Drag that `BlenderBridgeSource` asset into the level and confirm Unreal spawns a `BlenderBridgeActor` with `Source` already assigned.
 9. If the source exposes multiple GN targets, pick one in `Target`.
@@ -67,7 +67,7 @@ In Blender:
 In Unreal:
 
 1. Point your `BlenderBridgeSource` at that `.blend`.
-2. Create the global session from `Tools > Blender Bridge > Create Session`.
+2. Ensure the global session is running, either from auto-start or `Tools > Blender Bridge > Create Session`.
 3. If needed, choose the correct `Target`.
 4. Confirm the reflected schema contains the vector input.
 5. Change `X`, `Y`, or `Z` in `Input Values`.

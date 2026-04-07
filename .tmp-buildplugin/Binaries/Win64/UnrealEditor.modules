@@ -1,8 +1,0 @@
-{
-	"BuildId": "47537391",
-	"Modules": 
-	{
-		"BlenderBridgeEditor": "UnrealEditor-BlenderBridgeEditor.dll",
-		"BlenderBridgeRuntime": "UnrealEditor-BlenderBridgeRuntime.dll"
-	}
-}

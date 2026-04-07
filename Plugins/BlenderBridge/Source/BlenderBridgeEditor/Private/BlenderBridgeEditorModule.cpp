@@ -6,12 +6,20 @@
 
 #include "BlenderBridgeRuntimeModule.h"
 #include "BlenderBridgeSessionManager.h"
+#include "BlenderBridgeSettings.h"
+#include "CoreGlobals.h"
 #include "Editor.h"
 #include "Misc/CoreDelegates.h"
+#include "Misc/App.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
+#include "Styling/CoreStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "ToolMenus.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
 
 namespace
 {
@@ -29,6 +37,40 @@ namespace
             FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FBlenderBridgePropertyBagDetails::MakeInstance));
         PropertyModule.NotifyCustomizationModuleChanged();
     }
+
+    FLinearColor GetSessionStateColor(const EBlenderBridgeConnectionState ConnectionState)
+    {
+        switch (ConnectionState)
+        {
+        case EBlenderBridgeConnectionState::Connected:
+            return FLinearColor(0.18f, 0.72f, 0.32f);
+        case EBlenderBridgeConnectionState::Launching:
+            return FLinearColor(0.92f, 0.73f, 0.18f);
+        case EBlenderBridgeConnectionState::Disconnected:
+            return FLinearColor(0.85f, 0.22f, 0.22f);
+        case EBlenderBridgeConnectionState::Error:
+            return FLinearColor(0.78f, 0.12f, 0.12f);
+        default:
+            return FLinearColor(0.55f, 0.55f, 0.55f);
+        }
+    }
+
+    FText GetSessionStateLabel(const EBlenderBridgeConnectionState ConnectionState)
+    {
+        switch (ConnectionState)
+        {
+        case EBlenderBridgeConnectionState::Connected:
+            return FText::FromString(TEXT("Connected"));
+        case EBlenderBridgeConnectionState::Launching:
+            return FText::FromString(TEXT("Launching"));
+        case EBlenderBridgeConnectionState::Disconnected:
+            return FText::FromString(TEXT("Disconnected"));
+        case EBlenderBridgeConnectionState::Error:
+            return FText::FromString(TEXT("Error"));
+        default:
+            return FText::FromString(TEXT("Unknown"));
+        }
+    }
 }
 
 class FBlenderBridgeEditorModule final : public IModuleInterface
@@ -38,7 +80,7 @@ public:
     {
         FSlateStyleRegistry::RegisterSlateStyle(FBlenderBridgeEditorStyle::Get());
         RegisterBridgePropertyBagCustomization();
-        RegisterBlenderBridgeActorFactory();
+        RegisterPostEngineInitWork();
         FBlenderBridgeRuntimeModule::Get().SetBakeBridgeComponentDelegate(
             FBlenderBridgeBakeComponentDelegate::CreateStatic(&FBlenderBridgeBakeService::BakeComponent));
         FBlenderBridgeRuntimeModule::Get().SetSelectBakedOutputDelegate(
@@ -82,15 +124,43 @@ public:
     }
 
 private:
-    void RegisterBlenderBridgeActorFactory()
+    void RegisterPostEngineInitWork()
     {
         if (GEditor != nullptr)
         {
-            EnsureBlenderBridgeActorFactoryRegistered();
+            HandlePostEngineInit();
             return;
         }
 
-        FCoreDelegates::OnPostEngineInit.AddRaw(this, &FBlenderBridgeEditorModule::EnsureBlenderBridgeActorFactoryRegistered);
+        FCoreDelegates::OnPostEngineInit.AddRaw(this, &FBlenderBridgeEditorModule::HandlePostEngineInit);
+    }
+
+    void HandlePostEngineInit()
+    {
+        EnsureBlenderBridgeActorFactoryRegistered();
+        AutoStartSessionIfEnabled();
+    }
+
+    void AutoStartSessionIfEnabled()
+    {
+        if (IsRunningCommandlet() || FApp::IsUnattended() || GIsRunningUnattendedScript)
+        {
+            return;
+        }
+
+        const UBlenderBridgeSettings* Settings = GetDefault<UBlenderBridgeSettings>();
+        if (Settings == nullptr || !Settings->bAutoStartSessionOnEditorLaunch)
+        {
+            return;
+        }
+
+        FBlenderBridgeSessionManager& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
+        if (SessionManager.GetConnectionState() != EBlenderBridgeConnectionState::Disconnected)
+        {
+            return;
+        }
+
+        SessionManager.CreateSession();
     }
 
     void EnsureBlenderBridgeActorFactoryRegistered()
@@ -126,6 +196,8 @@ private:
     void PopulateBlenderBridgeMenu(UToolMenu* Menu)
     {
         FToolMenuSection& Section = Menu->AddSection(TEXT("Session"), FText::FromString(TEXT("Session")));
+        Section.AddEntry(BuildSessionStatusEntry());
+        Section.AddSeparator(TEXT("BlenderBridgeStatusSeparator"));
 
         Section.AddMenuEntry(
             TEXT("CreateSession"),
@@ -147,6 +219,61 @@ private:
             FText::FromString(TEXT("Stop the global Blender Bridge session.")),
             FSlateIcon(),
             FUIAction(FExecuteAction::CreateRaw(this, &FBlenderBridgeEditorModule::HandleStopSession)));
+    }
+
+    FToolMenuEntry BuildSessionStatusEntry() const
+    {
+        const FBlenderBridgeSessionManager& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
+        const EBlenderBridgeConnectionState ConnectionState = SessionManager.GetConnectionState();
+        const FLinearColor StatusColor = GetSessionStateColor(ConnectionState);
+        const FText StatusLabel = GetSessionStateLabel(ConnectionState);
+        const FText ToolTipText = FText::FromString(
+            SessionManager.GetLastSessionMessage().IsEmpty()
+                ? StatusLabel.ToString()
+                : SessionManager.GetLastSessionMessage());
+
+        TSharedRef<SHorizontalBox> StatusWidget =
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            .Padding(0.f, 0.f, 8.f, 0.f)
+            [
+                SNew(SBox)
+                .WidthOverride(10.f)
+                .HeightOverride(10.f)
+                [
+                    SNew(SBorder)
+                    .BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")))
+                    .BorderBackgroundColor(StatusColor)
+                    .Padding(0.f)
+                ]
+            ]
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            .Padding(0.f, 0.f, 10.f, 0.f)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Connection Status")))
+            ]
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(StatusLabel)
+                .ColorAndOpacity(FSlateColor(StatusColor))
+            ];
+
+        return FToolMenuEntry::InitWidget(
+            TEXT("BlenderBridgeSessionStatus"),
+            StatusWidget,
+            FText::FromString(TEXT("Connection Status")),
+            true,
+            false,
+            false,
+            ToolTipText);
     }
 
     void HandleCreateSession()

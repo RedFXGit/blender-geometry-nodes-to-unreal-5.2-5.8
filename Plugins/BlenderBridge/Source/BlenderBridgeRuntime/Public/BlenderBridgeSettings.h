@@ -14,6 +14,16 @@ public:
 
     virtual FName GetCategoryName() const override;
 
+    UPROPERTY(
+        EditAnywhere,
+        Config,
+        Category = "Session",
+        meta = (
+            DisplayName = "Automatically Start Session On Editor Launch",
+            ToolTip = "When enabled, Blender Bridge will attempt to launch the global Blender session after the Unreal Editor finishes starting."
+        ))
+    bool bAutoStartSessionOnEditorLaunch = true;
+
     UPROPERTY(EditAnywhere, Config, Category = "Session")
     FFilePath BlenderExecutablePath;
 

@@ -44,9 +44,9 @@ Today it can:
 1. Copy or sync `Plugins/BlenderBridge` into an Unreal C++ project.
 2. Enable the `BlenderBridge` plugin and ensure `ProceduralMeshComponent` is available.
 3. Open `Edit > Project Settings > Plugins > Blender Bridge`.
-4. Confirm `Blender Executable Path` is correct.
+4. Confirm `Automatically Start Session On Editor Launch` is set the way you want and `Blender Executable Path` is correct.
    Tip: if it is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
-5. Use `Tools > Blender Bridge > Create Session` to launch the global Blender worker.
+5. If auto-start is enabled, the plugin will attempt to launch the global Blender worker when the editor finishes starting. Otherwise use `Tools > Blender Bridge > Create Session`.
 6. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
    Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured `BlenderBridgeSource` asset for it.
 7. Drag that source asset from the Content Browser into the level to spawn an [ABlenderBridgeActor](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeActor.h) with its bridge component already configured.
@@ -91,6 +91,7 @@ Practical note:
 ## Shared Session Notes
 
 - Session controls are global and live under `Tools > Blender Bridge`.
+- The editor can auto-start the shared session on launch through `Edit > Project Settings > Plugins > Blender Bridge > Automatically Start Session On Editor Launch`.
 - Components no longer own Blender worker processes.
 - Dragging a `BlenderBridgeSource` into the level now spawns a dedicated `BlenderBridgeActor` instead of requiring a hand-built actor/component setup.
 - Multiple actors can point at the same source and target while keeping separate `Input Values` in Unreal.
