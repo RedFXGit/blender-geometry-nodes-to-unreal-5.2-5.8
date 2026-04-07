@@ -154,6 +154,14 @@ UBlenderBridgeComponent::UBlenderBridgeComponent()
     BridgeBuildVersion = BLENDER_BRIDGE_BUILD_VERSION;
 }
 
+void UBlenderBridgeComponent::AssignSourceFromActorFactory(UBlenderBridgeSource* InSource)
+{
+    const bool bPreviousSuppressPostEditNotifications = bSuppressPostEditNotifications;
+    bSuppressPostEditNotifications = true;
+    Source = InSource;
+    bSuppressPostEditNotifications = bPreviousSuppressPostEditNotifications;
+}
+
 void UBlenderBridgeComponent::OnRegister()
 {
     Super::OnRegister();
@@ -264,6 +272,11 @@ void UBlenderBridgeComponent::PostEditChangeProperty(FPropertyChangedEvent& Prop
 {
     Super::PostEditChangeProperty(PropertyChangedEvent);
 
+    if (bSuppressPostEditNotifications)
+    {
+        return;
+    }
+
     const FName ChangedPropertyName = PropertyChangedEvent.GetMemberPropertyName();
     FBlenderBridgeSessionManager& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
 
@@ -316,6 +329,7 @@ void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
     Owner->AddInstanceComponent(PreviewMeshComponent);
     PreviewMeshComponent->SetupAttachment(this);
     PreviewMeshComponent->SetMobility(EComponentMobility::Movable);
+    PreviewMeshComponent->SetCanEverAffectNavigation(false);
     PreviewMeshComponent->RegisterComponent();
     UpdatePreviewVisibility();
 }

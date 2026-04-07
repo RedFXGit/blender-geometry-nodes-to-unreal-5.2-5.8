@@ -287,8 +287,6 @@ void FBlenderBridgeWorkerSession::SendSerializedMessagesAsync(TArray<FBlenderBri
             return;
         }
 
-        Pinned->EmitLog(FString::Printf(TEXT("Background sender starting with %d queued message(s)."), Messages.Num()));
-
         for (const FBlenderBridgePendingMessage& Message : Messages)
         {
             if (!Pinned->PipeClient.IsConnected())
@@ -297,7 +295,7 @@ void FBlenderBridgeWorkerSession::SendSerializedMessagesAsync(TArray<FBlenderBri
                 return;
             }
 
-            UE_LOG(LogBlenderBridge, Log, TEXT("Attempting async send of %s to Blender worker."), BlenderBridge::LexToString(Message.Type));
+            UE_LOG(LogBlenderBridge, Verbose, TEXT("Attempting async send of %s to Blender worker."), BlenderBridge::LexToString(Message.Type));
             const bool bSuccess = Pinned->PipeClient.WriteLine(Message.SerializedLine);
             if (bSuccess)
             {
@@ -419,7 +417,7 @@ bool FBlenderBridgeWorkerSession::SendMessage(const EBlenderBridgeMessageType Ty
         return false;
     }
 
-    UE_LOG(LogBlenderBridge, Log, TEXT("Attempting send of %s to Blender worker."), BlenderBridge::LexToString(Type));
+    UE_LOG(LogBlenderBridge, Verbose, TEXT("Attempting send of %s to Blender worker."), BlenderBridge::LexToString(Type));
     const bool bSuccess = PipeClient.WriteLine(Line);
     if (bSuccess)
     {

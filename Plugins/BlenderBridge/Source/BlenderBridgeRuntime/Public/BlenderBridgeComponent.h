@@ -63,6 +63,8 @@ class BLENDERBRIDGERUNTIME_API UBlenderBridgeComponent : public USceneComponent
 public:
     UBlenderBridgeComponent();
 
+    void AssignSourceFromActorFactory(UBlenderBridgeSource* InSource);
+
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
     void RefreshInputSchema();
 
@@ -188,4 +190,5 @@ private:
     FBridgeDecodedMesh LastCookedMesh;
     bool bHasValidCookedMesh = false;
     bool bPendingBakeAfterCook = false;
+    bool bSuppressPostEditNotifications = false;
 };

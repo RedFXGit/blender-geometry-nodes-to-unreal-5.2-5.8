@@ -28,10 +28,13 @@ bool UActorFactoryBlenderBridgeSource::CanCreateActorFrom(const FAssetData& Asse
     return true;
 }
 
+bool UActorFactoryBlenderBridgeSource::PreSpawnActor(UObject* Asset, FTransform& InOutLocation)
+{
+    return Cast<UBlenderBridgeSource>(Asset) != nullptr;
+}
+
 void UActorFactoryBlenderBridgeSource::PostSpawnActor(UObject* Asset, AActor* NewActor)
 {
-    Super::PostSpawnActor(Asset, NewActor);
-
     UBlenderBridgeSource* SourceAsset = Cast<UBlenderBridgeSource>(Asset);
     ABlenderBridgeActor* BridgeActor = Cast<ABlenderBridgeActor>(NewActor);
     if (SourceAsset == nullptr || BridgeActor == nullptr)
@@ -41,8 +44,20 @@ void UActorFactoryBlenderBridgeSource::PostSpawnActor(UObject* Asset, AActor* Ne
 
     if (UBlenderBridgeComponent* BridgeComponent = BridgeActor->GetBridgeComponent())
     {
-        BridgeComponent->Source = SourceAsset;
-        auto& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
+        if (BridgeComponent->Source == SourceAsset)
+        {
+            return;
+        }
+
+        BridgeComponent->AssignSourceFromActorFactory(SourceAsset);
+
+        FBlenderBridgeSessionManager& SessionManager = FBlenderBridgeRuntimeModule::Get().GetSessionManager();
+        if (BridgeActor->bIsEditorPreviewActor)
+        {
+            SessionManager.WarmSourceOnPreviewDrag(SourceAsset, BridgeComponent);
+            return;
+        }
+
         if (SessionManager.IsSessionConnected())
         {
             BridgeComponent->RequestCook();
