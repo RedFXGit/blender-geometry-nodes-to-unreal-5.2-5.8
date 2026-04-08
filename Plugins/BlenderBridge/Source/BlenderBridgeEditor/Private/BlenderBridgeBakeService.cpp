@@ -21,7 +21,9 @@
 #include "Modules/ModuleManager.h"
 #include "ObjectTools.h"
 #include "PhysicsEngine/BodySetup.h"
+#include "RenderingThread.h"
 #include "StaticMeshAttributes.h"
+#include "StaticMeshResources.h"
 #include "UObject/Package.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBlenderBridgeBake, Log, All);
@@ -31,6 +33,7 @@ namespace
     constexpr TCHAR PlaceholderParentMaterialName[] = TEXT("M_BlenderBridgePlaceholderParent");
     constexpr TCHAR PlaceholderSupportFolderName[] = TEXT("_BridgeSupport");
     constexpr TCHAR PlaceholderParameterName[] = TEXT("BaseColor");
+    constexpr TCHAR BakeBuildPathTag[] = TEXT("[BlenderBridgeBakePath:EditorBuildSync_v2]");
 
     FString NormalizeBakeRootPath(const FString& InPath)
     {
@@ -242,6 +245,141 @@ namespace
             Section.FirstIndex + Section.IndexCount <= Mesh.Triangles.Num();
     }
 
+    int32 GetRenderTexCoordCount(const UStaticMesh* StaticMesh, int32 LODIndex)
+    {
+        if (StaticMesh == nullptr || StaticMesh->GetRenderData() == nullptr || !StaticMesh->GetRenderData()->LODResources.IsValidIndex(LODIndex))
+        {
+            return 0;
+        }
+
+        return StaticMesh->GetRenderData()->LODResources[LODIndex].VertexBuffers.StaticMeshVertexBuffer.GetNumTexCoords();
+    }
+
+    bool ShrinkRenderTexCoordsToUV0(UStaticMesh* StaticMesh, int32 LODIndex)
+    {
+        if (StaticMesh == nullptr || StaticMesh->GetRenderData() == nullptr || !StaticMesh->GetRenderData()->LODResources.IsValidIndex(LODIndex))
+        {
+            return false;
+        }
+
+        FStaticMeshLODResources& LODResources = StaticMesh->GetRenderData()->LODResources[LODIndex];
+        FStaticMeshVertexBuffer& VertexBuffer = LODResources.VertexBuffers.StaticMeshVertexBuffer;
+        const uint32 SourceTexCoordCount = VertexBuffer.GetNumTexCoords();
+        if (SourceTexCoordCount <= 1)
+        {
+            return false;
+        }
+
+        const uint32 NumVertices = VertexBuffer.GetNumVertices();
+        if (NumVertices == 0)
+        {
+            return false;
+        }
+
+        const bool bNeedsCPUAccess = VertexBuffer.GetAllowCPUAccess();
+        const bool bUseFullPrecisionUVs = VertexBuffer.GetUseFullPrecisionUVs();
+        const bool bUseHighPrecisionTangentBasis = VertexBuffer.GetUseHighPrecisionTangentBasis();
+
+        TArray<FVector3f> TangentX;
+        TArray<FVector3f> TangentY;
+        TArray<FVector3f> TangentZ;
+        TArray<FVector2f> UV0;
+        TangentX.Reserve(NumVertices);
+        TangentY.Reserve(NumVertices);
+        TangentZ.Reserve(NumVertices);
+        UV0.Reserve(NumVertices);
+
+        for (uint32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
+        {
+            const FVector4f TangentXValue = VertexBuffer.VertexTangentX(VertexIndex);
+            const FVector4f TangentZValue = VertexBuffer.VertexTangentZ(VertexIndex);
+            TangentX.Add(FVector3f(TangentXValue.X, TangentXValue.Y, TangentXValue.Z));
+            TangentY.Add(VertexBuffer.VertexTangentY(VertexIndex));
+            TangentZ.Add(FVector3f(TangentZValue.X, TangentZValue.Y, TangentZValue.Z));
+            UV0.Add(VertexBuffer.GetVertexUV(VertexIndex, 0));
+        }
+
+        VertexBuffer.CleanUp();
+        VertexBuffer.SetUseHighPrecisionTangentBasis(bUseHighPrecisionTangentBasis);
+        VertexBuffer.SetUseFullPrecisionUVs(bUseFullPrecisionUVs);
+        VertexBuffer.Init(NumVertices, 1, bNeedsCPUAccess);
+
+        for (uint32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
+        {
+            VertexBuffer.SetVertexTangents(VertexIndex, TangentX[VertexIndex], TangentY[VertexIndex], TangentZ[VertexIndex]);
+            VertexBuffer.SetVertexUV(VertexIndex, 0, UV0[VertexIndex]);
+        }
+
+        return true;
+    }
+
+    bool ShrinkRenderTexCoordsIfPadded(
+        UStaticMesh* StaticMesh,
+        int32 LODIndex,
+        const FString& MeshAssetName,
+        int32 SourceUVChannelCount,
+        const TCHAR* PhaseTag)
+    {
+        if (StaticMesh == nullptr || SourceUVChannelCount != 1)
+        {
+            return false;
+        }
+
+        if (StaticMesh->GetRenderData() == nullptr || !StaticMesh->GetRenderData()->LODResources.IsValidIndex(LODIndex))
+        {
+            return false;
+        }
+
+        const int32 RenderTexCoordsBeforeFix = GetRenderTexCoordCount(StaticMesh, LODIndex);
+        if (RenderTexCoordsBeforeFix <= 1)
+        {
+            return false;
+        }
+
+        UE_LOG(
+            LogBlenderBridgeBake,
+            Warning,
+            TEXT("%s Shrinking padded render tex coords for '%s' %s (render tex coords before=%d)."),
+            BakeBuildPathTag,
+            *MeshAssetName,
+            PhaseTag,
+            RenderTexCoordsBeforeFix);
+
+        TOptional<FStaticMeshComponentRecreateRenderStateContext> RecreateRenderStateContext;
+        if (StaticMesh->AreRenderingResourcesInitialized())
+        {
+            const bool bInvalidateLighting = false;
+            const bool bRefreshBounds = false;
+            RecreateRenderStateContext.Emplace(StaticMesh, bInvalidateLighting, bRefreshBounds);
+            StaticMesh->ReleaseResources();
+            FlushRenderingCommands();
+        }
+
+        const bool bShrinkApplied = ShrinkRenderTexCoordsToUV0(StaticMesh, LODIndex);
+        if (bShrinkApplied)
+        {
+            StaticMesh->UpdateUVChannelData(true);
+
+            if (StaticMesh->AreRenderingResourcesInitialized() == false)
+            {
+                StaticMesh->InitResources();
+            }
+        }
+
+        UE_LOG(
+            LogBlenderBridgeBake,
+            Log,
+            TEXT("%s UV shrink for '%s' %s: applied=%d, render tex coords before=%d, after=%d"),
+            BakeBuildPathTag,
+            *MeshAssetName,
+            PhaseTag,
+            bShrinkApplied ? 1 : 0,
+            RenderTexCoordsBeforeFix,
+            GetRenderTexCoordCount(StaticMesh, LODIndex));
+
+        return bShrinkApplied;
+    }
+
     UStaticMesh* BuildOrUpdateStaticMesh(
         UBlenderBridgeComponent* Component,
         const FString& BakeFolderPath,
@@ -269,6 +407,35 @@ namespace
         }
 
         StaticMesh->Modify();
+
+        StaticMesh->bAllowCPUAccess = true;
+        StaticMesh->SetImportVersion(EImportStaticMeshVersion::LastVersion);
+        StaticMesh->SetNumSourceModels(1);
+        StaticMesh->SetLightMapCoordinateIndex(0);
+
+        FMeshNaniteSettings NaniteSettings = StaticMesh->GetNaniteSettings();
+        NaniteSettings.bEnabled = false;
+        StaticMesh->SetNaniteSettings(NaniteSettings);
+
+        if (StaticMesh->IsNaniteForceEnabled())
+        {
+            UE_LOG(
+                LogBlenderBridgeBake,
+                Warning,
+                TEXT("%s Nanite is force-enabled by the engine/project for '%s'; baked meshes may still build through the Nanite fallback path."),
+                BakeBuildPathTag,
+                *MeshAssetName);
+        }
+
+        FStaticMeshSourceModel& SourceModel = StaticMesh->GetSourceModel(0);
+        SourceModel.BuildSettings = FMeshBuildSettings();
+        SourceModel.BuildSettings.bRecomputeNormals = false;
+        SourceModel.BuildSettings.bRecomputeTangents = true;
+        SourceModel.BuildSettings.bGenerateLightmapUVs = false;
+        SourceModel.BuildSettings.SrcLightmapIndex = 0;
+        SourceModel.BuildSettings.DstLightmapIndex = 0;
+        SourceModel.BuildSettings.bUseHighPrecisionTangentBasis = false;
+        SourceModel.BuildSettings.bUseFullPrecisionUVs = false;
 
         TArray<FStaticMaterial> StaticMaterials;
         StaticMaterials.Reserve(Component->LastCookedMaterialSlots.Num());
@@ -351,26 +518,35 @@ namespace
             }
         }
 
-        UStaticMesh::FBuildMeshDescriptionsParams BuildParams;
-        BuildParams.bFastBuild = true;
-        BuildParams.bBuildSimpleCollision = false;
-        BuildParams.bAllowCpuAccess = true;
-        BuildParams.bMarkPackageDirty = true;
-
-        const TArray<const FMeshDescription*> MeshDescriptions = { &MeshDescription };
-        if (!StaticMesh->BuildFromMeshDescriptions(MeshDescriptions, BuildParams))
+        FMeshDescription* StaticMeshDescription = StaticMesh->CreateMeshDescription(0);
+        if (StaticMeshDescription == nullptr)
         {
             return nullptr;
         }
 
+        *StaticMeshDescription = MeshDescription;
+        StaticMesh->CommitMeshDescription(0);
+
         UE_LOG(
             LogBlenderBridgeBake,
             Log,
-            TEXT("Built static mesh '%s': source UV channels=%d, built UV channels=%d, built tex coords=%d"),
-            *StaticMesh->GetPathName(),
-            MeshDescription.GetNumUVElementChannels(),
-            StaticMesh->GetNumUVChannels(0),
-            StaticMesh->GetNumTexCoords(0));
+            TEXT("%s Building '%s' via committed MeshDescription + UStaticMesh::Build(false, &BuildErrors)."),
+            BakeBuildPathTag,
+            *MeshAssetName);
+
+        TArray<FText> BuildErrors;
+        StaticMesh->Build(false, &BuildErrors);
+        for (const FText& BuildError : BuildErrors)
+        {
+            UE_LOG(LogBlenderBridgeBake, Warning, TEXT("Static mesh build warning for '%s': %s"), *MeshAssetName, *BuildError.ToString());
+        }
+
+        if (StaticMesh->GetRenderData() == nullptr || StaticMesh->GetRenderData()->LODResources.IsEmpty())
+        {
+            return nullptr;
+        }
+
+        ShrinkRenderTexCoordsIfPadded(StaticMesh, 0, MeshAssetName, MeshDescription.GetNumUVElementChannels(), TEXT("after editor build"));
 
         StaticMesh->CreateBodySetup();
         if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
@@ -389,6 +565,17 @@ namespace
         }
 
         StaticMesh->PostEditChange();
+        ShrinkRenderTexCoordsIfPadded(StaticMesh, 0, MeshAssetName, MeshDescription.GetNumUVElementChannels(), TEXT("after PostEditChange"));
+
+        UE_LOG(
+            LogBlenderBridgeBake,
+            Log,
+            TEXT("Built static mesh '%s': source UV channels=%d, built UV channels=%d, built tex coords=%d"),
+            *StaticMesh->GetPathName(),
+            MeshDescription.GetNumUVElementChannels(),
+            StaticMesh->GetNumUVChannels(0),
+            StaticMesh->GetNumTexCoords(0));
+
         StaticMesh->MarkPackageDirty();
         return StaticMesh;
     }

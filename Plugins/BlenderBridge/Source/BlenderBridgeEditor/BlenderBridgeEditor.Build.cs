@@ -28,6 +28,7 @@ public class BlenderBridgeEditor : ModuleRules
                 "MeshConversion",
                 "PropertyEditor",
                 "Projects",
+                "RenderCore",
                 "Slate",
                 "SlateCore",
                 "StaticMeshDescription",
