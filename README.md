@@ -1,6 +1,6 @@
 # Blender Bridge Vertical Slice
 
-This repository contains a working Unreal-to-Blender editor bridge prototype.
+This repository contains a working Unreal Editor to Blender bridge prototype for Geometry Nodes driven workflows.
 
 Today it can:
 
@@ -8,21 +8,24 @@ Today it can:
 - exchange control messages over a Windows named pipe
 - stream cooked mesh data through double-buffered shared memory
 - grow the shared-memory budget automatically when a cook exceeds the current slot size
-- display the result in Unreal with `UProceduralMeshComponent`
-- keep multiple `.blend` sources loaded in one Blender process
 - import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset
-- present that asset in the Content Browser as a custom `Blender Bridge Source` type instead of a generic data asset
 - drag a `BlenderBridgeSource` into the level to spawn a configured `BlenderBridgeActor`
 - discover multiple Geometry Nodes targets per `.blend`
 - reflect and drive one selected Geometry Nodes target per actor, including enums and Blender interface panel groupings
+- preview the cooked result in Unreal with `UProceduralMeshComponent`
+- bake the cooked result to a static mesh asset and spawned baked actor in the editor
+- preserve one authored UV channel on baked static meshes even when the UE 5.7 build path pads render texcoords
+- create generated placeholder materials for baked slots and allow per-slot material overrides
 
 ## Current Layout
 
 - Plugin descriptor: `Plugins/BlenderBridge/BlenderBridge.uplugin`
 - Runtime module: `Plugins/BlenderBridge/Source/BlenderBridgeRuntime`
+- Editor module: `Plugins/BlenderBridge/Source/BlenderBridgeEditor`
 - Blender worker: `Plugins/BlenderBridge/Scripts/bridge_server.py`
 - Sync helpers: `scripts/Sync-BlenderBridgeToProject.ps1` and `scripts/Watch-BlenderBridgeToProject.ps1`
 - Implementation/status plan: `PLAN.md`
+- Manual test guide: `TESTING.md`
 - Path reference notes: `PATHS.md`
 
 ## What The Current Slice Proves
@@ -30,32 +33,46 @@ Today it can:
 - Windows named pipe control messages work end to end.
 - A double-buffered shared-memory contract is in place.
 - Unreal Editor can launch one shared Blender worker, route actor requests through it, and consume the resulting payloads.
-- A minimal property-bag-backed input schema can drive per-actor cooks while actor input values remain isolated in Unreal.
+- A property-bag-backed input schema can drive per-actor cooks while actor input values remain isolated in Unreal.
 - Multiple `.blend` sources can stay loaded in the same Blender session without reopening a new mainfile for every actor switch.
 - A selected Geometry Nodes target can be loaded from a `.blend` file and streamed into Unreal as triangle-expanded geometry.
 - World transforms and basic Blender-to-Unreal coordinate conversion are applied during extraction.
 - A Geometry Nodes target can expose and accept `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum` inputs in real-mesh mode.
 - Reflected GN inputs preserve Blender interface panel hierarchy in the Unreal details panel.
-- Shared-session startup, schema requests, and cooks all run asynchronously enough to keep the editor usable during the current workflow.
 - Oversized cooks can trigger an automatic worker restart with a larger shared-memory mapping and then retry.
+- The cooked preview can be baked to a static mesh asset with stable material slots, placeholder materials, and a spawned baked actor.
+- The current bake path preserves a single authored UV channel on the final baked static mesh asset.
 
 ## Unreal Usage
 
 1. Copy or sync `Plugins/BlenderBridge` into an Unreal C++ project.
 2. Enable the `BlenderBridge` plugin and ensure `ProceduralMeshComponent` is available.
 3. Open `Edit > Project Settings > Plugins > Blender Bridge`.
-4. Confirm `Automatically Start Session On Editor Launch` is set the way you want and `Blender Executable Path` is correct.
-   Tip: if it is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
-5. If auto-start is enabled, the plugin will attempt to launch the global Blender worker when the editor finishes starting. Otherwise use `Tools > Blender Bridge > Create Session`.
-6. Create a [UBlenderBridgeSource](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeSource.h) asset and set `Blend File`.
-   Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured `BlenderBridgeSource` asset for it.
-7. Drag that source asset from the Content Browser into the level to spawn an [ABlenderBridgeActor](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeActor.h) with its bridge component already configured.
-   Tip: if you prefer, you can still add a [UBlenderBridgeComponent](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeRuntime\Public\BlenderBridgeComponent.h) to any actor manually and assign the source yourself.
-8. If the source exposes multiple GN targets, choose one in `Target`.
-9. Click `Refresh Input Schema` if needed and wait for the schema to populate.
+4. Confirm `Automatically Start Session On Editor Launch`, `Blender Executable Path`, and `Bake Root Content Path`.
+   Tip: if the Blender path is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
+5. If auto-start is disabled, use `Tools > Blender Bridge > Create Session`.
+6. Create a [UBlenderBridgeSource](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeSource.h) asset and set `Blend File`.
+   Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured source asset.
+7. Drag that source asset into the level to spawn an [ABlenderBridgeActor](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeActor.h) with its bridge component already configured.
+8. If the source exposes multiple Geometry Nodes targets, choose one in `Target`.
+9. Click `Refresh Input Schema` if needed and wait for `Input Schema` and `Input Values` to populate.
 10. Edit reflected values in `Input Values`.
-11. Click `Request Cook`.
-12. Confirm the preview mesh updates in the Unreal viewport.
+11. Click `Request Cook` and confirm the procedural preview updates in the viewport.
+12. If you want a baked asset, click `Bake To Static Mesh`.
+13. Use `Select Baked Output` to focus the baked actor or asset, and `Delete Baked Output` to remove generated bake content.
+
+## Bake Workflow Notes
+
+- Baking is editor-only.
+- If you bake before a valid cook exists, the component automatically queues a cook first and then bakes when the mesh arrives.
+- Baked assets are written under the `Bake Root Content Path` project setting, which defaults to `/Game/BlenderBridge/Baked`.
+- Each bake produces:
+  - a baked static mesh asset
+  - generated placeholder material instances for discovered slots when no override is provided
+  - a spawned baked static mesh actor attached to the source actor
+- `Material Overrides` are tracked by slot id and are applied both to the live preview and to baked output.
+- `Hide Preview After Bake` defaults to enabled so the procedural preview disappears when the baked actor is shown.
+- The bake path uses the committed `MeshDescription` editor build route and applies a post-build UV correction when UE 5.7 pads render texcoords beyond the authored UV count.
 
 ## Geometry Nodes Notes
 
@@ -83,31 +100,25 @@ Supported reflected socket types today:
 - `string`
 - `enum`
 
-Practical note:
-
-- `vector3` is the most useful next-step test because it maps naturally to nodes like `Transform Geometry`.
-- `color` and `string` values are transported and applied, but whether they create a visible change depends entirely on the GN graph you build.
-
 ## Shared Session Notes
 
 - Session controls are global and live under `Tools > Blender Bridge`.
 - The editor can auto-start the shared session on launch through `Edit > Project Settings > Plugins > Blender Bridge > Automatically Start Session On Editor Launch`.
 - Components no longer own Blender worker processes.
-- Dragging a `BlenderBridgeSource` into the level now spawns a dedicated `BlenderBridgeActor` instead of requiring a hand-built actor/component setup.
 - Multiple actors can point at the same source and target while keeping separate `Input Values` in Unreal.
 - Multiple sources can stay resident in one Blender worker process.
-- The current behavior is editor-only. Packaged/runtime bridge execution is intentionally unsupported in this first shared-session pass.
+- The current behavior is editor-only. Packaged/runtime bridge execution is intentionally unsupported in this slice.
 
 ## Intentional Gaps
 
 - No in-place shared-memory remap without worker restart yet.
-- No richer editor customization beyond the current `.blend` import factory, drag-to-level actor factory, and grouped input UI yet.
 - No packaged-runtime bridge execution yet.
 - No custom render proxy or RDG path yet.
+- No automated end-to-end tests yet.
 
 ## Syncing To A UE Project
 
-If you are developing the plugin from this repo and testing it from a separate Unreal project, use the PowerShell helpers in [scripts/Sync-BlenderBridgeToProject.ps1](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\scripts\Sync-BlenderBridgeToProject.ps1) and [scripts/Watch-BlenderBridgeToProject.ps1](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\scripts\Watch-BlenderBridgeToProject.ps1).
+If you are developing the plugin from this repo and testing it from a separate Unreal project, use the PowerShell helpers in [scripts/Sync-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/scripts/Sync-BlenderBridgeToProject.ps1) and [scripts/Watch-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/scripts/Watch-BlenderBridgeToProject.ps1).
 
 Manual one-shot sync:
 
@@ -125,6 +136,6 @@ These scripts mirror the source plugin into the Unreal project plugin folder whi
 
 ## Recommended Reading
 
-- Project status and next milestones: [PLAN.md](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\PLAN.md)
-- Manual test guide: [TESTING.md](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\TESTING.md)
-- Local path reference: [PATHS.md](C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\PATHS.md)
+- Project status and next milestones: [PLAN.md](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/PLAN.md)
+- Manual test guide: [TESTING.md](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/TESTING.md)
+- Local path reference: [PATHS.md](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/PATHS.md)

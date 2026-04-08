@@ -5,6 +5,8 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 - a shared editor-global Blender session
 - multiple loaded `.blend` sources in one Blender worker
 - per-actor target selection, schema reflection, and recook for supported socket types
+- live procedural preview in Unreal
+- baked static-mesh output with generated materials and baked actor management
 
 ## What Is Testable Today
 
@@ -17,6 +19,7 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 - Unreal can import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset.
 - Unreal shows that asset in the Content Browser as `Blender Bridge Source`.
 - Unreal can drag a `BlenderBridgeSource` into the level and spawn a configured `BlenderBridgeActor`.
+- Unreal can bake the latest cooked result to a static mesh asset and spawn a baked static mesh actor.
 - Unreal can restart the shared session with a larger shared-memory budget when a cook exceeds the current slot size.
 
 ## What Is Not Yet Testable As A Finished System
@@ -39,15 +42,17 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 2. Copy `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge` into that project's `Plugins` folder.
 3. Open the project in Unreal and enable the `BlenderBridge` plugin if Unreal prompts for it.
 4. Restart the editor so the plugin compiles and loads.
-5. Open `Edit > Project Settings > Plugins > Blender Bridge` and confirm `Automatically Start Session On Editor Launch` and `Blender Executable Path`.
-   Note: if blank, the plugin should auto-detect the newest standard Blender install.
+5. Open `Edit > Project Settings > Plugins > Blender Bridge` and confirm `Automatically Start Session On Editor Launch`, `Blender Executable Path`, and `Bake Root Content Path`.
+   Note: if the Blender path is blank, the plugin should auto-detect the newest standard install.
 6. If auto-start is disabled, use `Tools > Blender Bridge > Create Session`.
 7. Drag a `.blend` file into the Content Browser and confirm Unreal creates a `BlenderBridgeSource` asset for it.
 8. Drag that `BlenderBridgeSource` asset into the level and confirm Unreal spawns a `BlenderBridgeActor` with `Source` already assigned.
 9. If the source exposes multiple GN targets, pick one in `Target`.
 10. Click `Refresh Input Schema` if the schema does not appear automatically.
 11. Click `Request Cook`.
-12. Confirm the selected Blender target appears as a triangulated preview mesh.
+12. Confirm the selected Blender target appears as a triangulated procedural preview mesh.
+13. Click `Bake To Static Mesh`.
+14. Confirm Unreal creates a baked static mesh asset, a baked actor, and generated placeholder materials under the bake root.
 
 ## Recommended Geometry Nodes Test
 
@@ -74,6 +79,17 @@ In Unreal:
 6. Click `Request Cook`.
 7. Confirm the preview mesh moves.
 
+## Bake Validation Test
+
+After the procedural preview is working:
+
+1. Click `Bake To Static Mesh`.
+2. Confirm `Baked Static Mesh` and `Baked Actor` populate on the component.
+3. If `Hide Preview After Bake` is enabled, confirm the live preview hides and the baked actor stays visible.
+4. Click `Select Baked Output` and confirm Unreal selects the baked actor or syncs the baked asset in the Content Browser.
+5. Reopen the baked static mesh asset and confirm its UV dropdown shows only `UV Channel 0` for single-UV test content.
+6. Click `Delete Baked Output` and confirm the baked actor, baked mesh, and generated bake materials are removed.
+
 ## Additional GN Type Checks
 
 These are useful follow-up checks after the vector test:
@@ -85,10 +101,17 @@ These are useful follow-up checks after the vector test:
 - `string`: confirm the schema appears and cooks succeed; visible output depends on the graph.
 - `enum`: create a menu input, confirm Unreal presents a constrained selection, change it, and confirm the graph responds.
 
+## Material Slot Checks
+
+- Confirm `Cooked Material Slots` populates after a successful cook.
+- Confirm `Material Overrides` mirrors discovered slot ids.
+- Assign an override material and confirm it applies to the preview mesh.
+- Bake again and confirm the baked static mesh uses the override for that slot while non-overridden slots receive generated placeholder materials.
+
 ## Expected Success Signals
 
 - `Connection State` moves to `Connected` after the global session is created.
-- `Last Status Message` shows messages like `Loading source into the global Blender session.`, `Ready. Received ... bridge inputs.`, and `Applied bridge mesh from slot 1`.
+- `Last Status Message` shows progress like loading sources, reflecting schema, cooking, and baking output.
 - Importing a `.blend` into the Content Browser creates a `BlenderBridgeSource` with `Blend File` already populated.
 - The Content Browser labels that asset type as `Blender Bridge Source` instead of generic `Data Asset`.
 - Dragging that source into the level creates a `BlenderBridgeActor` with `Source` already assigned on its bridge component.
@@ -96,19 +119,17 @@ These are useful follow-up checks after the vector test:
 - `Input Schema` populates with supported float, int, bool, vector3, color, string, and enum inputs for the selected target.
 - A visible Blender target mesh appears in the level after `Request Cook`.
 - Changing a supported GN input and requesting another cook changes the preview mesh when the graph uses that input visibly.
-- Inputs that are grouped into Blender interface panels appear grouped the same way in Unreal details.
+- Baking creates a baked static mesh asset and baked actor under the configured bake root.
+- Single-UV bake content stays single-channel in the final baked static mesh asset.
 - If the mesh exceeds the current slot size, the bridge logs the resize, restarts the global session automatically, restores loaded sources, and retries the cook.
 
 ## Likely Failure Points
 
-- No Unreal host project: this repo currently contains a plugin, not a full `.uproject`.
+- No Unreal host project: this repo contains a plugin, not a full `.uproject`.
 - Blender executable path invalid and auto-detect failed.
 - Blender Python missing NumPy: the worker expects NumPy inside Blender's Python environment.
 - Source missing `Blend File`: the component will reject source load.
 - Multiple Geometry Nodes targets: the component requires a manual `Target` selection.
 - Renamed or removed GN targets: a previously saved `Target` can become unresolved after reload.
 - C++ changes require a UE rebuild; Blender worker script changes require restarting the global session.
-
-## If You Want A Lower-Friction Next Step
-
-The most useful next improvement would be true multi-instance Blender-side isolation inside the shared session and broader support for non-mesh Geometry Nodes data types like collection-driven inputs.
+- Unreal Editor left open during plugin sync/build can prevent the test project from picking up the newest plugin DLL cleanly.

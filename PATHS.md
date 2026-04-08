@@ -56,6 +56,8 @@ This file captures the most relevant paths discovered so far for the current Ble
 - Asset definition header: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\AssetDefinition_BlenderBridgeSource.h`
 - Asset definition source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\AssetDefinition_BlenderBridgeSource.cpp`
 - Editor module source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\BlenderBridgeEditorModule.cpp`
+- Actor details customization: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\BlenderBridgeActorDetails.cpp`
+- Bake service: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\BlenderBridgeBakeService.cpp`
 - Property bag customization source: `C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge\Source\BlenderBridgeEditor\Private\BlenderBridgePropertyBagDetails.cpp`
 
 ## Sync And Project Paths
@@ -80,6 +82,8 @@ This file captures the most relevant paths discovered so far for the current Ble
 - Property bag API: `C:\Program Files\Epic Games\UE_5.7\Engine\Source\Runtime\CoreUObject\Public\StructUtils\PropertyBag.h`
 - Struct utils directory: `C:\Program Files\Epic Games\UE_5.7\Engine\Source\Runtime\CoreUObject\Public\StructUtils`
 - Procedural mesh component header: `C:\Program Files\Epic Games\UE_5.7\Engine\Plugins\Runtime\ProceduralMeshComponent\Source\ProceduralMeshComponent\Public\ProceduralMeshComponent.h`
+- Static mesh vertex buffer header referenced during bake debugging: `C:\Program Files\Epic Games\UE_5.7\Engine\Source\Runtime\Engine\Public\Rendering\StaticMeshVertexBuffer.h`
+- Static mesh implementation referenced during bake debugging: `C:\Program Files\Epic Games\UE_5.7\Engine\Source\Runtime\Engine\Private\StaticMesh.cpp`
 
 ## Local Blender Installs
 
@@ -94,12 +98,14 @@ This file captures the most relevant paths discovered so far for the current Ble
 
 - Unreal project setting location: `Edit > Project Settings > Plugins > Blender Bridge`
 - Global session menu location: `Tools > Blender Bridge`
+- Actor details actions: `Refresh Input Schema`, `Request Cook`, `Bake To Static Mesh`, `Select Baked Output`, `Delete Baked Output`
 - Asset placement flow: `Import .blend -> BlenderBridgeSource -> drag source into level -> BlenderBridgeActor`
+- Default bake root content path: `/Game/BlenderBridge/Baked`
 - Auto-detected default Blender path on this machine: `C:\Program Files\Blender Foundation\Blender 5.1\blender.exe`
 
 ## Notes
 
-- The Unreal Engine paths above are local-machine discoveries from this session and may differ on another machine.
+- The Unreal Engine paths above are local-machine discoveries and may differ on another machine.
 - `Build\` in the repo is disposable packaging output from Unreal's `BuildPlugin` flow and is not source-of-truth content.
-- The shared-session architecture stores `Blender Executable Path` and shared-memory settings globally in editor per-project user settings, not on each component.
+- The shared-session architecture stores `Blender Executable Path`, shared-memory settings, and bake root settings globally in editor per-project user settings.
 - The live source-of-truth implementation is the repo plugin under `Plugins\BlenderBridge`; the Unreal project plugin copy is just the synced test target.
