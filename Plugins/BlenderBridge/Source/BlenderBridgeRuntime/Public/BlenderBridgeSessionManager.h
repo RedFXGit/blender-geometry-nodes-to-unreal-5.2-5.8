@@ -22,6 +22,7 @@ public:
     void NotifyTargetChanged(UBlenderBridgeComponent* Component);
     void RefreshComponentSchema(UBlenderBridgeComponent* Component, bool bForceReload);
     void RequestCook(UBlenderBridgeComponent* Component);
+    void ReleaseComponentState(UBlenderBridgeComponent* Component);
     void WarmSourceOnPreviewDrag(UBlenderBridgeSource* Source, UBlenderBridgeComponent* PreviewComponent);
 
     bool IsSessionConnected() const;
@@ -46,6 +47,7 @@ private:
     struct FTargetSchemaCache
     {
         TArray<FBridgeInputSchema> Schema;
+        FBridgeTargetCapabilities Capabilities;
     };
 
     struct FCookedTargetCache

@@ -3,6 +3,7 @@ import ast
 import ctypes
 import hashlib
 import json
+import math
 import mmap
 import os
 import sys
@@ -14,8 +15,10 @@ except ImportError as exc:
 
 try:
     import bpy  # type: ignore
+    from mathutils import Vector  # type: ignore
 except ImportError:
     bpy = None
+    Vector = None
 
 
 PIPE_ACCESS_DUPLEX = 0x00000003
@@ -180,6 +183,28 @@ def get_interface_item_category_path(item) -> str:
     return "|".join(category_parts)
 
 
+def convert_curve_vector_to_unreal(value) -> list[float]:
+    return [
+        float(value[0]) * 100.0,
+        float(value[1]) * -100.0,
+        float(value[2]) * 100.0,
+    ]
+
+
+def convert_curve_vector_from_unreal(value) -> object:
+    if Vector is None:
+        raise RuntimeError("mathutils.Vector is unavailable")
+
+    components = to_float_list(value, 3, 0.0)
+    return Vector(
+        (
+            components[0] / 100.0,
+            components[1] / -100.0,
+            components[2] / 100.0,
+        )
+    )
+
+
 class BridgeMeshSlotHeader(ctypes.Structure):
     _pack_ = 1
     _fields_ = [
@@ -339,12 +364,27 @@ class BridgeLoadedSource:
         self.targets_by_id = {str(target["id"]): target for target in targets}
 
 
+class BridgeComponentState:
+    def __init__(
+        self,
+        source_handle: str,
+        component_handle: str,
+        target_id: str,
+        object_name: str,
+    ) -> None:
+        self.source_handle = source_handle
+        self.component_handle = component_handle
+        self.target_id = target_id
+        self.object_name = object_name
+
+
 class BridgeWorker:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.pipe = NamedPipeServer(args.pipe_name)
         self.shared_memory = mmap.mmap(-1, args.shared_memory_bytes, tagname=args.shared_memory_name)
         self.loaded_sources: dict[str, BridgeLoadedSource] = {}
+        self.component_states: dict[tuple[str, str], BridgeComponentState] = {}
 
     def send(self, message_type: str, **payload: object) -> None:
         payload["message_type"] = message_type
@@ -383,10 +423,50 @@ class BridgeWorker:
         digest = hashlib.sha1(source_handle.encode("utf-8")).hexdigest()[:12]
         return f"BridgeSource_{digest}"
 
+    def make_component_state_key(self, source_handle: str, component_handle: str) -> tuple[str, str]:
+        return (source_handle, component_handle)
+
+    def make_component_object_name(self, source_handle: str, component_handle: str, target_name: str) -> str:
+        digest = hashlib.sha1(f"{source_handle}|{component_handle}|{target_name}".encode("utf-8")).hexdigest()[:12]
+        return f"BridgeComponent_{digest}_{target_name}"
+
+    def release_component_state(self, component_handle: str, source_handle: str = "") -> None:
+        if bpy is None or not component_handle:
+            return
+
+        keys_to_release = [
+            state_key
+            for state_key, state in self.component_states.items()
+            if state.component_handle == component_handle and (not source_handle or state.source_handle == source_handle)
+        ]
+        if not keys_to_release and source_handle:
+            keys_to_release = [
+                state_key
+                for state_key, state in self.component_states.items()
+                if state.component_handle == component_handle
+            ]
+
+        for state_key in keys_to_release:
+            state = self.component_states.pop(state_key, None)
+            if state is None:
+                continue
+
+            bridge_object = bpy.data.objects.get(state.object_name)
+            if bridge_object is not None:
+                bpy.data.objects.remove(bridge_object, do_unlink=True)
+
     def unload_source(self, source_handle: str) -> None:
         source_state = self.loaded_sources.pop(source_handle, None)
         if source_state is None or bpy is None:
             return
+
+        component_handles = [
+            state.component_handle
+            for state in self.component_states.values()
+            if state.source_handle == source_handle
+        ]
+        for component_handle in component_handles:
+            self.release_component_state(component_handle, source_handle)
 
         for object_name in reversed(source_state.object_names):
             bridge_object = bpy.data.objects.get(object_name)
@@ -452,6 +532,7 @@ class BridgeWorker:
                     "label": f"{target_object.name} / {modifier.name}",
                     "object_name": target_object.name,
                     "modifier_name": modifier.name,
+                    "object_type": str(getattr(target_object, "type", "") or ""),
                 }
             )
 
@@ -528,6 +609,182 @@ class BridgeWorker:
 
         return source_state, target_descriptor, target_object, modifier
 
+    def does_modifier_use_owner_geometry(self, modifier) -> bool:
+        if modifier is None or modifier.node_group is None:
+            return False
+
+        for node in modifier.node_group.nodes:
+            if getattr(node, "bl_idname", "") != "NodeGroupInput":
+                continue
+
+            for output in node.outputs:
+                if getattr(output, "name", "") == "Geometry" and len(output.links) > 0:
+                    return True
+
+        return False
+
+    def export_curve_owner_snapshot(self, target_object) -> dict[str, object]:
+        curve_data = getattr(target_object, "data", None)
+        if curve_data is None or len(curve_data.splines) != 1:
+            return {"curve_type": "None", "closed": False, "points": []}
+
+        spline = curve_data.splines[0]
+        if getattr(spline, "type", "") != "BEZIER":
+            return {"curve_type": "Unsupported", "closed": bool(getattr(spline, "use_cyclic_u", False)), "points": []}
+
+        points: list[dict[str, object]] = []
+        for bezier_point in spline.bezier_points:
+            position = convert_curve_vector_to_unreal(bezier_point.co)
+            arrive_tangent = convert_curve_vector_to_unreal((bezier_point.co - bezier_point.handle_left) * 3.0)
+            leave_tangent = convert_curve_vector_to_unreal((bezier_point.handle_right - bezier_point.co) * 3.0)
+            radius = float(getattr(bezier_point, "radius", 1.0) or 1.0)
+            points.append(
+                {
+                    "position": position,
+                    "arrive_tangent": arrive_tangent,
+                    "leave_tangent": leave_tangent,
+                    "roll_degrees": float(math.degrees(float(getattr(bezier_point, "tilt", 0.0) or 0.0))),
+                    "scale": [radius, radius, radius],
+                    "point_type": "Curve",
+                }
+            )
+
+        return {
+            "curve_type": "Bezier",
+            "closed": bool(getattr(spline, "use_cyclic_u", False)),
+            "points": points,
+        }
+
+    def build_target_capabilities(self, target_object, modifier) -> dict[str, object]:
+        capabilities: dict[str, object] = {
+            "target_kind": "standard",
+            "supports_curve_owner": False,
+            "curve_owner_message": "",
+            "owner_curve": {
+                "curve_type": "None",
+                "closed": False,
+                "points": [],
+            },
+        }
+
+        if target_object is None or getattr(target_object, "type", "") != "CURVE":
+            return capabilities
+
+        capabilities["target_kind"] = "curve_owner"
+
+        if not self.does_modifier_use_owner_geometry(modifier):
+            capabilities["curve_owner_message"] = "Curve-owner targets must consume the modifier Geometry input."
+            return capabilities
+
+        curve_data = getattr(target_object, "data", None)
+        if curve_data is None:
+            capabilities["curve_owner_message"] = "Curve-owner target is missing curve data."
+            return capabilities
+
+        if len(curve_data.splines) != 1:
+            capabilities["curve_owner_message"] = "Curve-owner v1 requires exactly one spline on the target curve object."
+            return capabilities
+
+        spline = curve_data.splines[0]
+        if getattr(spline, "type", "") != "BEZIER":
+            capabilities["curve_owner_message"] = (
+                f"Curve-owner v1 only supports Bezier splines; found {getattr(spline, 'type', 'Unknown')}."
+            )
+            return capabilities
+
+        capabilities["supports_curve_owner"] = True
+        capabilities["curve_owner_message"] = "Curve-owner target is compatible."
+        capabilities["owner_curve"] = self.export_curve_owner_snapshot(target_object)
+        return capabilities
+
+    def resolve_component_target(self, source_state: BridgeLoadedSource, target_descriptor: dict[str, object], target_object, component_handle: str):
+        if not component_handle:
+            raise RuntimeError("component_handle is required for curve-owner targets")
+
+        state_key = self.make_component_state_key(source_state.source_handle, component_handle)
+        existing_state = self.component_states.get(state_key)
+        if existing_state is not None and existing_state.target_id == str(target_descriptor["id"]):
+            existing_object = bpy.data.objects.get(existing_state.object_name)
+            if existing_object is not None:
+                existing_modifier = existing_object.modifiers.get(str(target_descriptor["modifier_name"]))
+                if existing_modifier is not None and existing_modifier.type == "NODES" and existing_modifier.node_group is not None:
+                    return existing_object, existing_modifier
+
+            self.release_component_state(component_handle, source_state.source_handle)
+
+        duplicate_object = target_object.copy()
+        if getattr(target_object, "data", None) is not None:
+            duplicate_object.data = target_object.data.copy()
+        duplicate_object.name = self.make_component_object_name(
+            source_state.source_handle,
+            component_handle,
+            str(target_descriptor["object_name"]),
+        )
+
+        source_collection = bpy.data.collections.get(source_state.collection_name)
+        if source_collection is None:
+            raise RuntimeError(f"Loaded source collection '{source_state.collection_name}' is no longer available")
+        if source_collection.objects.get(duplicate_object.name) is None:
+            source_collection.objects.link(duplicate_object)
+
+        duplicate_modifier = duplicate_object.modifiers.get(str(target_descriptor["modifier_name"]))
+        if duplicate_modifier is None or duplicate_modifier.type != "NODES" or duplicate_modifier.node_group is None:
+            raise RuntimeError("Failed to duplicate the curve-owner target modifier for component-local cooking")
+
+        self.component_states[state_key] = BridgeComponentState(
+            source_handle=source_state.source_handle,
+            component_handle=component_handle,
+            target_id=str(target_descriptor["id"]),
+            object_name=duplicate_object.name,
+        )
+        return duplicate_object, duplicate_modifier
+
+    def apply_curve_owner_payload(self, target_object, curve_payload: dict) -> None:
+        if bpy is None:
+            raise RuntimeError("Curve-owner payload application requires Blender's bpy module")
+
+        curve_data = getattr(target_object, "data", None)
+        if curve_data is None:
+            raise RuntimeError("Curve-owner target does not have curve data")
+
+        points = curve_payload.get("points", [])
+        if not isinstance(points, list) or not points:
+            raise RuntimeError("Curve-owner payload must include at least one spline point")
+
+        while len(curve_data.splines) > 0:
+            curve_data.splines.remove(curve_data.splines[0])
+
+        spline = curve_data.splines.new(type="BEZIER")
+        if len(points) > 1:
+            spline.bezier_points.add(len(points) - 1)
+
+        spline.use_cyclic_u = bool(curve_payload.get("closed", False))
+        curve_data.dimensions = "3D"
+
+        for point_index, point_payload in enumerate(points):
+            bezier_point = spline.bezier_points[point_index]
+            point_position = convert_curve_vector_from_unreal(point_payload.get("position", (0.0, 0.0, 0.0)))
+            arrive_tangent = convert_curve_vector_from_unreal(point_payload.get("arrive_tangent", (0.0, 0.0, 0.0)))
+            leave_tangent = convert_curve_vector_from_unreal(point_payload.get("leave_tangent", (0.0, 0.0, 0.0)))
+            point_type = str(point_payload.get("point_type", "Curve") or "Curve").strip().lower()
+
+            bezier_point.co = point_position
+            bezier_point.handle_left = point_position - (arrive_tangent / 3.0)
+            bezier_point.handle_right = point_position + (leave_tangent / 3.0)
+
+            handle_type = "FREE"
+            if point_type in {"linear", "constant"}:
+                handle_type = "VECTOR"
+            bezier_point.handle_left_type = handle_type
+            bezier_point.handle_right_type = handle_type
+
+            bezier_point.tilt = math.radians(float(point_payload.get("roll_degrees", 0.0) or 0.0))
+
+            scale_values = to_float_list(point_payload.get("scale", (1.0, 1.0, 1.0)), 3, 1.0)
+            bezier_point.radius = float(sum(scale_values) / len(scale_values))
+
+        target_object.update_tag()
+
     def build_geometry_nodes_schema_for_target(self, modifier) -> list[dict[str, object]]:
         if modifier is None or modifier.node_group is None:
             return []
@@ -601,6 +858,7 @@ class BridgeWorker:
         source_handle = str(payload.get("source_handle") or "").strip()
         target_id = str(payload.get("target_id") or "").strip()
         _source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+        capabilities = self.build_target_capabilities(target_object, modifier)
 
         self.send_for_request(
             "TargetDescription",
@@ -610,6 +868,7 @@ class BridgeWorker:
             schema=self.build_geometry_nodes_schema_for_target(modifier),
             object_name=target_object.name,
             modifier_name=modifier.name,
+            **capabilities,
         )
 
     def get_modifier_enum_options(self, modifier, identifier: str) -> list[dict[str, object]]:
@@ -1180,18 +1439,38 @@ class BridgeWorker:
         request_id = str(payload.get("request_id") or "")
         source_handle = str(payload.get("source_handle") or "").strip()
         target_id = str(payload.get("target_id") or "").strip()
+        component_handle = str(payload.get("component_handle") or "").strip()
         values = payload.get("values", {})
         if not isinstance(values, dict):
             values = {}
+        curve_payload = payload.get("owner_curve", {})
+        if not isinstance(curve_payload, dict):
+            curve_payload = {}
 
-        _source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
-        self.apply_geometry_nodes_inputs(target_object, modifier, values)
+        source_state, target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+        capabilities = self.build_target_capabilities(target_object, modifier)
+        if bool(capabilities.get("supports_curve_owner", False)):
+            working_object, working_modifier = self.resolve_component_target(
+                source_state,
+                target_descriptor,
+                target_object,
+                component_handle,
+            )
+            self.apply_curve_owner_payload(working_object, curve_payload)
+            self.apply_geometry_nodes_inputs(working_object, working_modifier, values)
+            target_object = working_object
+            modifier = working_modifier
+        else:
+            self.apply_geometry_nodes_inputs(target_object, modifier, values)
+
         bpy.context.view_layer.update()
         depsgraph = bpy.context.evaluated_depsgraph_get()
         extracted_buffers, cooked_target_label = self.extract_render_buffers_for_geometry_nodes_target(target_object, depsgraph)
         if extracted_buffers is None:
             extracted_buffers = self.extract_render_buffers_for_object(target_object, depsgraph)
-            cooked_target_label = target_object.name
+            cooked_target_label = str(target_descriptor["object_name"])
+        else:
+            cooked_target_label = str(target_descriptor["object_name"])
 
         if extracted_buffers is None or extracted_buffers[0].size == 0:
             raise RuntimeError(f"Target '{target_id}' did not produce any triangles")
@@ -1242,6 +1521,12 @@ class BridgeWorker:
             return True
         if message_type == "CookTarget":
             self.cook_target(message)
+            return True
+        if message_type == "ReleaseComponentState":
+            self.release_component_state(
+                str(message.get("component_handle") or "").strip(),
+                str(message.get("source_handle") or "").strip(),
+            )
             return True
         if message_type == "Shutdown":
             return False

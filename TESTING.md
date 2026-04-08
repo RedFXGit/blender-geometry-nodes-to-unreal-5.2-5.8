@@ -5,6 +5,7 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 - a shared editor-global Blender session
 - multiple loaded `.blend` sources in one Blender worker
 - per-actor target selection, schema reflection, and recook for supported socket types
+- curve-owner spline import and live recook from an embedded Unreal spline component
 - live procedural preview in Unreal
 - baked static-mesh output with generated materials and baked actor management
 
@@ -14,6 +15,7 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 - Unreal Editor can launch one shared Blender worker process from the global session menu.
 - The worker can keep multiple `.blend` files loaded at once without reopening a mainfile for every actor switch.
 - The worker can discover Geometry Nodes targets from a loaded `.blend`, reflect their schema, and cook one selected target at a time.
+- The worker can duplicate a curve-owner GN target per Unreal actor, import the authored Blender Bezier curve into Unreal, and recook from Unreal spline edits.
 - The worker can apply supported Geometry Nodes values and recook the selected preview mesh.
 - Unreal can read the shared-memory slot and render the result with `UProceduralMeshComponent`.
 - Unreal can import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset.
@@ -79,6 +81,29 @@ In Unreal:
 6. Click `Request Cook`.
 7. Confirm the preview mesh moves.
 
+## Curve-Owner Spline Test
+
+Use `C:\Users\Lassiter\Downloads\Blender_Geo\Curve.blend` as the anchor example for this workflow.
+
+In Blender:
+
+1. Confirm `Blenderesse_ElectricLineGenerator_V01` is a `CURVE` object with a `GeometryNodes` modifier.
+2. Confirm the curve uses one Bezier spline and the GN graph consumes `Group Input -> Geometry`.
+3. Confirm the `Collision` collection input is authored in Blender and saved with the file.
+
+In Unreal:
+
+1. Import or point a `BlenderBridgeSource` at `C:\Users\Lassiter\Downloads\Blender_Geo\Curve.blend`.
+2. Drag the source into the level and select `Blenderesse_ElectricLineGenerator_V01|GeometryNodes` as the target if needed.
+3. Confirm the actor contains a `Bridge Spline Component`.
+4. Click `Refresh Input Schema` and confirm the target reports ready status for curve-owner spline editing.
+5. Confirm the embedded Unreal spline matches the authored Blender curve on first load.
+6. Move one or more spline points in the viewport and wait for the debounced recook.
+7. Confirm the preview mesh updates and the Blender-authored `Collision` collection behavior still affects the result.
+8. Change a reflected numeric input such as `Spacing` and confirm the cook still responds while using the edited spline.
+9. Duplicate the actor, edit the duplicate's spline differently, and confirm both actors keep distinct results.
+10. Bake one actor and confirm the existing static-mesh bake flow still succeeds from the curve-owner cook path.
+
 ## Bake Validation Test
 
 After the procedural preview is working:
@@ -117,8 +142,10 @@ These are useful follow-up checks after the vector test:
 - Dragging that source into the level creates a `BlenderBridgeActor` with `Source` already assigned on its bridge component.
 - In real-mesh mode, `Target` auto-selects when there is exactly one GN target and stays unresolved when there are multiple.
 - `Input Schema` populates with supported float, int, bool, vector3, color, string, and enum inputs for the selected target.
+- Curve-owner targets import their authored Blender spline into the actor's embedded Unreal spline component on load.
 - A visible Blender target mesh appears in the level after `Request Cook`.
 - Changing a supported GN input and requesting another cook changes the preview mesh when the graph uses that input visibly.
+- Editing the embedded Unreal spline on a curve-owner target triggers a debounced cook and updates only that actor's preview.
 - Baking creates a baked static mesh asset and baked actor under the configured bake root.
 - Single-UV bake content stays single-channel in the final baked static mesh asset.
 - If the mesh exceeds the current slot size, the bridge logs the resize, restarts the global session automatically, restores loaded sources, and retries the cook.

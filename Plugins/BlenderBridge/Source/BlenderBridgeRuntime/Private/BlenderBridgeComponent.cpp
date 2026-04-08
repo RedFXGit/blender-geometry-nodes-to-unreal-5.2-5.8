@@ -3,11 +3,14 @@
 #include "BlenderBridgeRuntimeModule.h"
 #include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSource.h"
+#include "BlenderBridgeMessages.h"
+#include "Components/SplineComponent.h"
 #include "Engine/UserDefinedEnum.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
 #include "Modules/ModuleManager.h"
 #include "ProceduralMeshComponent.h"
 #include "UObject/Class.h"
@@ -45,6 +48,53 @@ namespace
         default:
             return TEXT("Unsupported");
         }
+    }
+
+    ESplinePointType::Type ToSplinePointType(const EBlenderBridgeSplinePointType Type)
+    {
+        switch (Type)
+        {
+        case EBlenderBridgeSplinePointType::Linear:
+            return ESplinePointType::Linear;
+        case EBlenderBridgeSplinePointType::Constant:
+            return ESplinePointType::Constant;
+        case EBlenderBridgeSplinePointType::CurveClamped:
+            return ESplinePointType::CurveClamped;
+        case EBlenderBridgeSplinePointType::CurveCustomTangent:
+            return ESplinePointType::CurveCustomTangent;
+        case EBlenderBridgeSplinePointType::Curve:
+        default:
+            return ESplinePointType::Curve;
+        }
+    }
+
+    EBlenderBridgeSplinePointType ToBridgeSplinePointType(const ESplinePointType::Type Type)
+    {
+        switch (Type)
+        {
+        case ESplinePointType::Linear:
+            return EBlenderBridgeSplinePointType::Linear;
+        case ESplinePointType::Constant:
+            return EBlenderBridgeSplinePointType::Constant;
+        case ESplinePointType::CurveClamped:
+            return EBlenderBridgeSplinePointType::CurveClamped;
+        case ESplinePointType::CurveCustomTangent:
+            return EBlenderBridgeSplinePointType::CurveCustomTangent;
+        case ESplinePointType::Curve:
+        default:
+            return EBlenderBridgeSplinePointType::Curve;
+        }
+    }
+
+    FString MakeCurveOwnerHash(const FBridgeCurveOwnerData& CurveOwnerData)
+    {
+        FString SerializedCurve;
+        if (!BlenderBridge::SerializeCurveOwnerData(CurveOwnerData, SerializedCurve))
+        {
+            return FString();
+        }
+
+        return FMD5::HashAnsiString(*SerializedCurve);
     }
 
     FName GetBridgeInputBagPropertyName(const FBridgeInputSchema& Entry)
@@ -166,6 +216,9 @@ void UBlenderBridgeComponent::OnRegister()
 {
     Super::OnRegister();
 
+    RefreshComponentHandle();
+    BindSplineComponentDelegates();
+
     if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
     {
         ConnectionState = FBlenderBridgeRuntimeModule::Get().GetSessionManager().GetConnectionState();
@@ -262,6 +315,12 @@ TArray<FString> UBlenderBridgeComponent::GetAvailableTargetOptions() const
 
 void UBlenderBridgeComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
 {
+    CancelPendingSplineCook();
+    UnbindSplineComponentDelegates();
+    if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
+    {
+        FBlenderBridgeRuntimeModule::Get().GetSessionManager().ReleaseComponentState(this);
+    }
     CancelPendingBakedOutputVisibilitySwap();
     ResetBridgeData(false);
     Super::OnComponentDestroyed(bDestroyingHierarchy);
@@ -332,6 +391,86 @@ void UBlenderBridgeComponent::EnsurePreviewMeshComponent()
     PreviewMeshComponent->SetCanEverAffectNavigation(false);
     PreviewMeshComponent->RegisterComponent();
     UpdatePreviewVisibility();
+}
+
+void UBlenderBridgeComponent::RefreshComponentHandle()
+{
+    ComponentHandle = GetPathNameSafe(this);
+}
+
+void UBlenderBridgeComponent::BindSplineComponentDelegates()
+{
+    UnbindSplineComponentDelegates();
+
+    if (USplineComponent* SplineComponent = GetBridgeSplineComponent())
+    {
+        SplineComponent->GetOnSplineChanged().AddUObject(this, &UBlenderBridgeComponent::HandleBridgeSplineChanged);
+        SplineComponent->GetOnSplineUpdated().AddUObject(this, &UBlenderBridgeComponent::HandleBridgeSplineChanged);
+    }
+}
+
+void UBlenderBridgeComponent::UnbindSplineComponentDelegates()
+{
+    if (USplineComponent* SplineComponent = GetBridgeSplineComponent())
+    {
+        SplineComponent->GetOnSplineChanged().RemoveAll(this);
+        SplineComponent->GetOnSplineUpdated().RemoveAll(this);
+    }
+}
+
+USplineComponent* UBlenderBridgeComponent::GetBridgeSplineComponent() const
+{
+    if (AActor* Owner = GetOwner())
+    {
+        return Owner->FindComponentByClass<USplineComponent>();
+    }
+
+    return nullptr;
+}
+
+void UBlenderBridgeComponent::HandleBridgeSplineChanged()
+{
+    if (bSuppressSplineNotifications || !TargetCapabilities.bSupportsCurveOwner)
+    {
+        return;
+    }
+
+    bSplineEditedSinceImport = true;
+    QueueCookFromSplineEdit();
+}
+
+void UBlenderBridgeComponent::QueueCookFromSplineEdit()
+{
+    CancelPendingSplineCook();
+
+    if (Source == nullptr || TargetId.IsEmpty() || ConnectionState != EBlenderBridgeConnectionState::Connected)
+    {
+        return;
+    }
+
+    SetBridgeStatus(EBlenderBridgeComponentStatus::CookQueued, TEXT("Spline changed. Waiting to cook."));
+    PendingSplineCookTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+        FTickerDelegate::CreateWeakLambda(
+            this,
+            [this](const float)
+            {
+                PendingSplineCookTickerHandle.Reset();
+                if (Source != nullptr && !TargetId.IsEmpty() && ConnectionState == EBlenderBridgeConnectionState::Connected)
+                {
+                    RequestCook();
+                }
+                return false;
+            }),
+        0.25f);
+}
+
+void UBlenderBridgeComponent::CancelPendingSplineCook()
+{
+    if (PendingSplineCookTickerHandle.IsValid())
+    {
+        FTSTicker::GetCoreTicker().RemoveTicker(PendingSplineCookTickerHandle);
+        PendingSplineCookTickerHandle.Reset();
+    }
 }
 
 void UBlenderBridgeComponent::ApplyDecodedMesh(FBridgeDecodedMesh&& DecodedMesh)
@@ -701,8 +840,149 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
     InputValues = MoveTemp(NewBag);
 }
 
+bool UBlenderBridgeComponent::BuildCurveOwnerData(FBridgeCurveOwnerData& OutCurveData, FString& OutCurveHash) const
+{
+    OutCurveData = FBridgeCurveOwnerData();
+    OutCurveHash.Reset();
+
+    if (!TargetCapabilities.bSupportsCurveOwner)
+    {
+        return false;
+    }
+
+    const USplineComponent* SplineComponent = GetBridgeSplineComponent();
+    if (SplineComponent == nullptr || SplineComponent->GetNumberOfSplinePoints() <= 0)
+    {
+        return false;
+    }
+
+    OutCurveData.CurveType = EBlenderBridgeCurveType::Bezier;
+    OutCurveData.bClosedLoop = SplineComponent->IsClosedLoop();
+    OutCurveData.Points.Reserve(SplineComponent->GetNumberOfSplinePoints());
+
+    for (int32 PointIndex = 0; PointIndex < SplineComponent->GetNumberOfSplinePoints(); ++PointIndex)
+    {
+        FBridgeCurveOwnerPoint Point;
+        Point.Position = SplineComponent->GetLocationAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
+        Point.ArriveTangent = SplineComponent->GetArriveTangentAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
+        Point.LeaveTangent = SplineComponent->GetLeaveTangentAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
+        Point.RollDegrees = SplineComponent->GetRollAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
+        Point.Scale = SplineComponent->GetScaleAtSplinePoint(PointIndex);
+        Point.Type = ToBridgeSplinePointType(SplineComponent->GetSplinePointType(PointIndex));
+        OutCurveData.Points.Add(MoveTemp(Point));
+    }
+
+    OutCurveHash = MakeCurveOwnerHash(OutCurveData);
+    return true;
+}
+
+FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
+    const FString& InTargetId,
+    const FBridgeTargetCapabilities& InCapabilities,
+    const bool bPreserveExistingSplineState)
+{
+    TargetCapabilities = InCapabilities;
+
+    if (TargetCapabilities.TargetKind != EBlenderBridgeTargetKind::CurveOwner)
+    {
+        ImportedCurveTargetId.Reset();
+        ImportedCurveHash.Reset();
+        bSplineEditedSinceImport = false;
+        return FString();
+    }
+
+    if (!TargetCapabilities.bSupportsCurveOwner)
+    {
+        ImportedCurveTargetId.Reset();
+        ImportedCurveHash.Reset();
+        bSplineEditedSinceImport = false;
+        return TargetCapabilities.CompatibilityMessage.IsEmpty()
+            ? TEXT(" Curve-owner spline editing is unavailable for this target.")
+            : FString::Printf(TEXT(" Curve-owner spline editing unavailable: %s"), *TargetCapabilities.CompatibilityMessage);
+    }
+
+    const FString IncomingCurveHash = MakeCurveOwnerHash(TargetCapabilities.OwnerCurve);
+    const bool bShouldImportCurve =
+        ImportedCurveTargetId != InTargetId ||
+        !bPreserveExistingSplineState ||
+        !bSplineEditedSinceImport ||
+        ImportedCurveHash.IsEmpty();
+
+    if (bShouldImportCurve)
+    {
+        FString ImportedHash;
+        if (!ImportCurveOwnerData(TargetCapabilities.OwnerCurve, ImportedHash))
+        {
+            return TEXT(" Curve-owner target is compatible, but the embedded Unreal spline could not be initialized.");
+        }
+
+        ImportedCurveTargetId = InTargetId;
+        ImportedCurveHash = ImportedHash.IsEmpty() ? IncomingCurveHash : ImportedHash;
+        return TEXT(" Imported owner curve from Blender.");
+    }
+
+    ImportedCurveTargetId = InTargetId;
+    if (ImportedCurveHash.IsEmpty())
+    {
+        ImportedCurveHash = IncomingCurveHash;
+    }
+    return TEXT(" Preserved local spline edits.");
+}
+
+bool UBlenderBridgeComponent::ImportCurveOwnerData(const FBridgeCurveOwnerData& InCurveData, FString& OutCurveHash)
+{
+    OutCurveHash.Reset();
+
+    USplineComponent* SplineComponent = GetBridgeSplineComponent();
+    if (SplineComponent == nullptr || InCurveData.CurveType != EBlenderBridgeCurveType::Bezier || InCurveData.Points.IsEmpty())
+    {
+        return false;
+    }
+
+    const bool bPreviousSuppressSplineNotifications = bSuppressSplineNotifications;
+    bSuppressSplineNotifications = true;
+
+    SplineComponent->ClearSplinePoints(false);
+    for (const FBridgeCurveOwnerPoint& Point : InCurveData.Points)
+    {
+        SplineComponent->AddSplinePoint(Point.Position, ESplineCoordinateSpace::Local, false);
+    }
+
+    for (int32 PointIndex = 0; PointIndex < InCurveData.Points.Num(); ++PointIndex)
+    {
+        const FBridgeCurveOwnerPoint& Point = InCurveData.Points[PointIndex];
+        SplineComponent->SetSplinePointType(PointIndex, ToSplinePointType(Point.Type), false);
+        SplineComponent->SetTangentsAtSplinePoint(
+            PointIndex,
+            Point.ArriveTangent,
+            Point.LeaveTangent,
+            ESplineCoordinateSpace::Local,
+            false);
+        if (!FMath::IsNearlyZero(Point.RollDegrees))
+        {
+            const FQuat CurrentQuaternion = SplineComponent->GetQuaternionAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
+            const FQuat RollQuaternion(FVector::ForwardVector, FMath::DegreesToRadians(Point.RollDegrees));
+            SplineComponent->SetQuaternionAtSplinePoint(
+                PointIndex,
+                CurrentQuaternion * RollQuaternion,
+                ESplineCoordinateSpace::Local,
+                false);
+        }
+        SplineComponent->SetScaleAtSplinePoint(PointIndex, Point.Scale, false);
+    }
+
+    SplineComponent->SetClosedLoop(InCurveData.bClosedLoop, false);
+    SplineComponent->UpdateSpline();
+
+    bSuppressSplineNotifications = bPreviousSuppressSplineNotifications;
+    bSplineEditedSinceImport = false;
+    OutCurveHash = MakeCurveOwnerHash(InCurveData);
+    return true;
+}
+
 void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
 {
+    CancelPendingSplineCook();
     CancelPendingBakedOutputVisibilitySwap();
 
     if (PreviewMeshComponent != nullptr)
@@ -713,6 +993,7 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     AvailableTargets.Reset();
     SchemaTargetId.Reset();
     InputSchema.Reset();
+    TargetCapabilities = FBridgeTargetCapabilities();
     TargetDisplayLabel.Reset();
     LastCookedMaterialSlots.Reset();
     LastCookedMesh.Reset();
@@ -721,6 +1002,9 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     bShowingBakedOutput = false;
     RuntimeInputEnums.Reset();
     RuntimeInputEnumHashes.Reset();
+    ImportedCurveTargetId.Reset();
+    ImportedCurveHash.Reset();
+    bSplineEditedSinceImport = false;
     InputValues = FInstancedPropertyBag();
 
     if (bClearTargetSelection)

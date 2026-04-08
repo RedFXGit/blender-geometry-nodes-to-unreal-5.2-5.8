@@ -22,6 +22,8 @@ namespace
     constexpr TCHAR SourceHandleFieldName[] = TEXT("source_handle");
     constexpr TCHAR BlendFileFieldName[] = TEXT("blend_file");
     constexpr TCHAR TargetIdFieldName[] = TEXT("target_id");
+    constexpr TCHAR ComponentHandleFieldName[] = TEXT("component_handle");
+    constexpr TCHAR CurveHashFieldName[] = TEXT("curve_hash");
     constexpr TCHAR ForceReloadFieldName[] = TEXT("force_reload");
     constexpr TCHAR CacheKeyDelimiter[] = TEXT("|");
 
@@ -127,6 +129,7 @@ namespace
         const FString& TargetId,
         const TArray<FBridgeInputSchema>& Schema,
         const FInstancedPropertyBag& InputValues,
+        const FString& CurveHash,
         FString& OutCookCacheKey)
     {
         OutCookCacheKey.Reset();
@@ -146,12 +149,14 @@ namespace
         }
 
         OutCookCacheKey = FString::Printf(
-            TEXT("%s%s%s%s%s"),
+            TEXT("%s%s%s%s%s%s%s"),
             *SourceHandle,
             CacheKeyDelimiter,
             *TargetId,
             CacheKeyDelimiter,
-            *SerializedValuesPayload);
+            *SerializedValuesPayload,
+            CacheKeyDelimiter,
+            *CurveHash);
         return true;
     }
 
@@ -372,6 +377,44 @@ void FBlenderBridgeSessionManager::Shutdown()
     StopSession();
 }
 
+void FBlenderBridgeSessionManager::ReleaseComponentState(UBlenderBridgeComponent* Component)
+{
+    if (!IsValid(Component))
+    {
+        return;
+    }
+
+    for (auto It = PendingRequests.CreateIterator(); It; ++It)
+    {
+        if (It.Value().Component.Get() == Component)
+        {
+            It.RemoveCurrent();
+        }
+    }
+
+    if (!Session.IsValid() || !Session->IsConnected())
+    {
+        return;
+    }
+
+    Component->RefreshComponentHandle();
+    if (Component->GetComponentHandle().IsEmpty())
+    {
+        return;
+    }
+
+    TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(ComponentHandleFieldName, Component->GetComponentHandle());
+
+    const FString SourceHandle = Component->GetSourceHandle();
+    if (!SourceHandle.IsEmpty())
+    {
+        Payload->SetStringField(SourceHandleFieldName, SourceHandle);
+    }
+
+    Session->QueueMessage(EBlenderBridgeMessageType::ReleaseComponentState, Payload);
+}
+
 void FBlenderBridgeSessionManager::NotifySourceChanged(UBlenderBridgeComponent* Component)
 {
     if (!IsValid(Component))
@@ -385,6 +428,7 @@ void FBlenderBridgeSessionManager::NotifySourceChanged(UBlenderBridgeComponent* 
         return;
     }
 
+    ReleaseComponentState(Component);
     Component->ResetBridgeData(true);
 
     if (Component->Source == nullptr || GetComponentBlendFilePath(Component).IsEmpty())
@@ -450,8 +494,11 @@ void FBlenderBridgeSessionManager::NotifyTargetChanged(UBlenderBridgeComponent* 
         return;
     }
 
+    ReleaseComponentState(Component);
+    Component->CancelPendingSplineCook();
     Component->SchemaTargetId.Reset();
     Component->InputSchema.Reset();
+    Component->TargetCapabilities = FBridgeTargetCapabilities();
     Component->RebuildInputValues(false);
     Component->UpdateTargetDisplayLabel();
     if (Component->PreviewMeshComponent != nullptr)
@@ -739,17 +786,22 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             TargetId = PendingRequest.TargetId;
         }
 
+        FBridgeTargetCapabilities Capabilities;
+        BlenderBridge::ParseTargetCapabilities(Message.Payload, Capabilities);
+
         Component->InputSchema = MoveTemp(Schema);
         Component->SchemaTargetId = TargetId;
         Component->RebuildInputValues(PendingRequest.bPreserveInputValues);
+        const FString CurveOwnerStatus = Component->ApplyCurveOwnerDescription(TargetId, Capabilities, PendingRequest.bPreserveInputValues);
         if (!PendingRequest.SourceHandle.IsEmpty() && !TargetId.IsEmpty())
         {
             FTargetSchemaCache& CachedSchema = TargetSchemaCaches.FindOrAdd(MakeTargetSchemaCacheKey(PendingRequest.SourceHandle, TargetId));
             CachedSchema.Schema = Component->InputSchema;
+            CachedSchema.Capabilities = Capabilities;
         }
         Component->SetBridgeStatus(
             EBlenderBridgeComponentStatus::Ready,
-            FString::Printf(TEXT("Ready. Received %d bridge inputs."), Component->InputSchema.Num()));
+            FString::Printf(TEXT("Ready. Received %d bridge inputs.%s"), Component->InputSchema.Num(), *CurveOwnerStatus));
 
         if (PendingRequest.bRequestCookAfterDescribe)
         {
@@ -928,9 +980,10 @@ bool FBlenderBridgeSessionManager::TryApplyCachedTargetDescription(
     Component->InputSchema = CachedSchema->Schema;
     Component->SchemaTargetId = Component->TargetId;
     Component->RebuildInputValues(bPreserveInputValues);
+    const FString CurveOwnerStatus = Component->ApplyCurveOwnerDescription(Component->TargetId, CachedSchema->Capabilities, bPreserveInputValues);
     Component->SetBridgeStatus(
         EBlenderBridgeComponentStatus::Ready,
-        FString::Printf(TEXT("Ready. Reused %d cached bridge inputs."), Component->InputSchema.Num()));
+        FString::Printf(TEXT("Ready. Reused %d cached bridge inputs.%s"), Component->InputSchema.Num(), *CurveOwnerStatus));
 
     if (bRequestCookAfterDescribe)
     {
@@ -947,8 +1000,18 @@ bool FBlenderBridgeSessionManager::TryApplyCachedCook(UBlenderBridgeComponent* C
         return false;
     }
 
+    FString CurveHash;
+    if (Component->TargetCapabilities.bSupportsCurveOwner)
+    {
+        FBridgeCurveOwnerData CurveData;
+        if (!Component->BuildCurveOwnerData(CurveData, CurveHash))
+        {
+            return false;
+        }
+    }
+
     FString CookCacheKey;
-    if (!BuildCookCacheKey(Component->GetSourceHandle(), Component->TargetId, Component->InputSchema, Component->InputValues, CookCacheKey))
+    if (!BuildCookCacheKey(Component->GetSourceHandle(), Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, CookCacheKey))
     {
         return false;
     }
@@ -1006,8 +1069,11 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
 
         if (Component->TargetId != PreviousTargetId)
         {
+            ReleaseComponentState(Component);
+            Component->CancelPendingSplineCook();
             Component->SchemaTargetId.Reset();
             Component->InputSchema.Reset();
+            Component->TargetCapabilities = FBridgeTargetCapabilities();
             Component->RebuildInputValues(false);
             if (Component->PreviewMeshComponent != nullptr)
             {
@@ -1019,6 +1085,7 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
         {
             Component->SchemaTargetId.Reset();
             Component->InputSchema.Reset();
+            Component->TargetCapabilities = FBridgeTargetCapabilities();
             Component->RebuildInputValues(false);
             if (Component->PreviewMeshComponent != nullptr)
             {
@@ -1032,6 +1099,7 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
         {
             Component->SchemaTargetId.Reset();
             Component->InputSchema.Reset();
+            Component->TargetCapabilities = FBridgeTargetCapabilities();
             Component->RebuildInputValues(false);
             if (Component->PreviewMeshComponent != nullptr)
             {
@@ -1280,24 +1348,44 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
         return RequestDescribeTarget(Component, Component->SchemaTargetId == Component->TargetId, true);
     }
 
+    FBridgeCurveOwnerData CurveOwnerData;
+    FString CurveHash;
+    if (Component->TargetCapabilities.bSupportsCurveOwner)
+    {
+        if (!Component->BuildCurveOwnerData(CurveOwnerData, CurveHash))
+        {
+            Component->SetBridgeStatus(
+                EBlenderBridgeComponentStatus::Error,
+                TEXT("Curve-owner target requires a valid embedded Unreal spline before it can cook."));
+            return false;
+        }
+    }
+
     if (TryApplyCachedCook(Component))
     {
         return true;
     }
 
+    Component->RefreshComponentHandle();
     const FString RequestId = MakeRequestId();
     TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(RequestIdFieldName, RequestId);
     Payload->SetStringField(SourceHandleFieldName, SourceHandle);
     Payload->SetStringField(TargetIdFieldName, Component->TargetId);
+    Payload->SetStringField(ComponentHandleFieldName, Component->GetComponentHandle());
     BlenderBridge::AddInputValuesToPayload(Component->InputSchema, Component->InputValues, Payload);
+    if (Component->TargetCapabilities.bSupportsCurveOwner)
+    {
+        Payload->SetStringField(CurveHashFieldName, CurveHash);
+        BlenderBridge::AddCurveOwnerDataToPayload(CurveOwnerData, Payload);
+    }
 
     FPendingRequest PendingRequest;
     PendingRequest.Kind = EBridgeManagerRequestKind::CookTarget;
     PendingRequest.Component = Component;
     PendingRequest.SourceHandle = SourceHandle;
     PendingRequest.TargetId = Component->TargetId;
-    BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, PendingRequest.CookCacheKey);
+    BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, PendingRequest.CookCacheKey);
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooking, TEXT("Cooking selected target."));

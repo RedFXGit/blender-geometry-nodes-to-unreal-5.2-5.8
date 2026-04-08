@@ -16,6 +16,8 @@ const TCHAR* BlenderBridge::LexToString(const EBlenderBridgeMessageType Type)
         return TEXT("TargetDescription");
     case EBlenderBridgeMessageType::CookTarget:
         return TEXT("CookTarget");
+    case EBlenderBridgeMessageType::ReleaseComponentState:
+        return TEXT("ReleaseComponentState");
     case EBlenderBridgeMessageType::CookComplete:
         return TEXT("CookComplete");
     case EBlenderBridgeMessageType::ResizeRequired:
@@ -38,6 +40,7 @@ bool BlenderBridge::TryParseMessageType(const FString& Text, EBlenderBridgeMessa
         {TEXT("DescribeTarget"), EBlenderBridgeMessageType::DescribeTarget},
         {TEXT("TargetDescription"), EBlenderBridgeMessageType::TargetDescription},
         {TEXT("CookTarget"), EBlenderBridgeMessageType::CookTarget},
+        {TEXT("ReleaseComponentState"), EBlenderBridgeMessageType::ReleaseComponentState},
         {TEXT("CookComplete"), EBlenderBridgeMessageType::CookComplete},
         {TEXT("ResizeRequired"), EBlenderBridgeMessageType::ResizeRequired},
         {TEXT("Error"), EBlenderBridgeMessageType::Error},

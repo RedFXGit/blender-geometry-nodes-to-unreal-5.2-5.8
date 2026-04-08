@@ -14,6 +14,7 @@ class AStaticMeshActor;
 class UMaterialInterface;
 class UBlenderBridgeSource;
 class UProceduralMeshComponent;
+class USplineComponent;
 class UStaticMesh;
 class UUserDefinedEnum;
 class FBlenderBridgeSessionManager;
@@ -84,6 +85,7 @@ public:
     TArray<FString> GetAvailableTargetOptions() const;
 
     const FBridgeDecodedMesh& GetLastCookedMesh() const { return LastCookedMesh; }
+    const FString& GetComponentHandle() const { return ComponentHandle; }
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     TObjectPtr<UBlenderBridgeSource> Source;
@@ -108,6 +110,9 @@ public:
     UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     FString SchemaTargetId;
 
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
+    FString ComponentHandle;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     EBlenderBridgeConnectionState ConnectionState = EBlenderBridgeConnectionState::Disconnected;
 
@@ -122,6 +127,9 @@ public:
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     TArray<FBridgeInputSchema> InputSchema;
+
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Spline")
+    FBridgeTargetCapabilities TargetCapabilities;
 
     UPROPERTY(EditAnywhere, Category = "Blender Bridge", meta = (FixedLayout, BlenderBridgeGroupedLayout))
     FInstancedPropertyBag InputValues;
@@ -155,9 +163,19 @@ protected:
 private:
     void EnsurePreviewMeshComponent();
     void ApplyDecodedMesh(FBridgeDecodedMesh&& DecodedMesh);
+    void RefreshComponentHandle();
+    void BindSplineComponentDelegates();
+    void UnbindSplineComponentDelegates();
+    USplineComponent* GetBridgeSplineComponent() const;
+    void HandleBridgeSplineChanged();
+    void QueueCookFromSplineEdit();
+    void CancelPendingSplineCook();
     void RebuildInputValues(bool bPreserveExistingValues);
     UUserDefinedEnum* GetOrCreateRuntimeEnum(const FBridgeInputSchema& Entry);
     void ResetBridgeData(bool bClearTargetSelection);
+    bool BuildCurveOwnerData(FBridgeCurveOwnerData& OutCurveData, FString& OutCurveHash) const;
+    FString ApplyCurveOwnerDescription(const FString& InTargetId, const FBridgeTargetCapabilities& InCapabilities, bool bPreserveExistingSplineState);
+    bool ImportCurveOwnerData(const FBridgeCurveOwnerData& InCurveData, FString& OutCurveHash);
     FString GetSourceHandle() const;
     const FBridgeTargetDescriptor* FindTargetDescriptor(const FString& InTargetId) const;
     void UpdateTargetDisplayLabel();
@@ -186,9 +204,14 @@ private:
     bool bShowingBakedOutput = false;
 
     FTSTicker::FDelegateHandle PendingShowBakedOutputTickerHandle;
+    FTSTicker::FDelegateHandle PendingSplineCookTickerHandle;
     TMap<FName, uint32> RuntimeInputEnumHashes;
     FBridgeDecodedMesh LastCookedMesh;
+    FString ImportedCurveTargetId;
+    FString ImportedCurveHash;
     bool bHasValidCookedMesh = false;
     bool bPendingBakeAfterCook = false;
+    bool bSplineEditedSinceImport = false;
+    bool bSuppressSplineNotifications = false;
     bool bSuppressPostEditNotifications = false;
 };

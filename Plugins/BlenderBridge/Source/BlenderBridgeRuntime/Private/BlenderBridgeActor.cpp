@@ -1,6 +1,7 @@
 #include "BlenderBridgeActor.h"
 
 #include "BlenderBridgeComponent.h"
+#include "Components/SplineComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BlenderBridgeActor)
 
@@ -10,6 +11,13 @@ ABlenderBridgeActor::ABlenderBridgeActor()
 
     BridgeComponent = CreateDefaultSubobject<UBlenderBridgeComponent>(TEXT("BlenderBridgeComponent"));
     SetRootComponent(BridgeComponent);
+
+    BridgeSplineComponent = CreateDefaultSubobject<USplineComponent>(TEXT("BridgeSplineComponent"));
+    BridgeSplineComponent->SetupAttachment(BridgeComponent);
+    BridgeSplineComponent->SetMobility(EComponentMobility::Movable);
+    BridgeSplineComponent->SetUsingAbsoluteLocation(false);
+    BridgeSplineComponent->SetUsingAbsoluteRotation(false);
+    BridgeSplineComponent->SetUsingAbsoluteScale(false);
 }
 
 void ABlenderBridgeActor::RefreshInputSchema()
@@ -55,4 +63,9 @@ void ABlenderBridgeActor::DeleteBakedOutput()
 UBlenderBridgeComponent* ABlenderBridgeActor::GetBridgeComponent() const
 {
     return BridgeComponent;
+}
+
+USplineComponent* ABlenderBridgeActor::GetBridgeSplineComponent() const
+{
+    return BridgeSplineComponent;
 }

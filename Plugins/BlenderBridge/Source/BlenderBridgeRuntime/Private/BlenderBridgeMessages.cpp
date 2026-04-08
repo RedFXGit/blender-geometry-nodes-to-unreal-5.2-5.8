@@ -8,9 +8,98 @@
 
 namespace
 {
+    constexpr TCHAR CurveOwnerFieldName[] = TEXT("owner_curve");
+
     FName GetBagPropertyName(const FBridgeInputSchema& Entry)
     {
         return FInstancedPropertyBag::SanitizePropertyName(Entry.Id);
+    }
+
+    EBlenderBridgeTargetKind ParseTargetKind(const FString& Value)
+    {
+        if (Value.Equals(TEXT("curve_owner"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeTargetKind::CurveOwner;
+        }
+
+        if (Value.Equals(TEXT("standard"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeTargetKind::Standard;
+        }
+
+        return EBlenderBridgeTargetKind::Unknown;
+    }
+
+    EBlenderBridgeCurveType ParseCurveType(const FString& Value)
+    {
+        if (Value.Equals(TEXT("bezier"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeCurveType::Bezier;
+        }
+
+        if (Value.IsEmpty() || Value.Equals(TEXT("none"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeCurveType::None;
+        }
+
+        return EBlenderBridgeCurveType::Unsupported;
+    }
+
+    EBlenderBridgeSplinePointType ParseSplinePointType(const FString& Value)
+    {
+        if (Value.Equals(TEXT("linear"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeSplinePointType::Linear;
+        }
+
+        if (Value.Equals(TEXT("constant"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeSplinePointType::Constant;
+        }
+
+        if (Value.Equals(TEXT("curveclamped"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeSplinePointType::CurveClamped;
+        }
+
+        if (Value.Equals(TEXT("curvecustomtangent"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeSplinePointType::CurveCustomTangent;
+        }
+
+        return EBlenderBridgeSplinePointType::Curve;
+    }
+
+    FString SplinePointTypeToString(const EBlenderBridgeSplinePointType Value)
+    {
+        switch (Value)
+        {
+        case EBlenderBridgeSplinePointType::Linear:
+            return TEXT("Linear");
+        case EBlenderBridgeSplinePointType::Constant:
+            return TEXT("Constant");
+        case EBlenderBridgeSplinePointType::CurveClamped:
+            return TEXT("CurveClamped");
+        case EBlenderBridgeSplinePointType::CurveCustomTangent:
+            return TEXT("CurveCustomTangent");
+        case EBlenderBridgeSplinePointType::Curve:
+        default:
+            return TEXT("Curve");
+        }
+    }
+
+    FString CurveTypeToString(const EBlenderBridgeCurveType Value)
+    {
+        switch (Value)
+        {
+        case EBlenderBridgeCurveType::Bezier:
+            return TEXT("Bezier");
+        case EBlenderBridgeCurveType::Unsupported:
+            return TEXT("Unsupported");
+        case EBlenderBridgeCurveType::None:
+        default:
+            return TEXT("None");
+        }
     }
 
     EBlenderBridgeInputType ParseInputType(const FString& Value)
@@ -111,6 +200,11 @@ namespace
         return true;
     }
 
+    bool TryReadScaleField(const TSharedPtr<FJsonObject>& Payload, const TCHAR* FieldName, FVector& OutScale)
+    {
+        return TryReadVectorField(Payload, FieldName, OutScale);
+    }
+
     void ParseEnumOptions(const TSharedPtr<FJsonObject>& Payload, TArray<FBridgeEnumOption>& OutOptions)
     {
         OutOptions.Reset();
@@ -188,6 +282,11 @@ namespace
         Values.Add(Value.B);
         Values.Add(Value.A);
         SetNumberArrayField(Payload, FieldName, Values);
+    }
+
+    void SetScaleField(const TSharedRef<FJsonObject>& Payload, const FString& FieldName, const FVector& Value)
+    {
+        SetVectorField(Payload, FieldName, Value);
     }
 }
 
@@ -293,6 +392,64 @@ bool BlenderBridge::ParseInputSchema(const TSharedPtr<FJsonObject>& Payload, TAr
     return true;
 }
 
+bool BlenderBridge::ParseTargetCapabilities(const TSharedPtr<FJsonObject>& Payload, FBridgeTargetCapabilities& OutCapabilities)
+{
+    OutCapabilities = FBridgeTargetCapabilities();
+
+    if (!Payload.IsValid())
+    {
+        return false;
+    }
+
+    FString TargetKindText;
+    Payload->TryGetStringField(TEXT("target_kind"), TargetKindText);
+    OutCapabilities.TargetKind = ParseTargetKind(TargetKindText);
+    Payload->TryGetBoolField(TEXT("supports_curve_owner"), OutCapabilities.bSupportsCurveOwner);
+    Payload->TryGetStringField(TEXT("curve_owner_message"), OutCapabilities.CompatibilityMessage);
+
+    const TSharedPtr<FJsonObject>* CurveOwnerObject = nullptr;
+    if (!Payload->TryGetObjectField(CurveOwnerFieldName, CurveOwnerObject) || CurveOwnerObject == nullptr || !CurveOwnerObject->IsValid())
+    {
+        return true;
+    }
+
+    FString CurveTypeText;
+    CurveOwnerObject->Get()->TryGetStringField(TEXT("curve_type"), CurveTypeText);
+    OutCapabilities.OwnerCurve.CurveType = ParseCurveType(CurveTypeText);
+    CurveOwnerObject->Get()->TryGetBoolField(TEXT("closed"), OutCapabilities.OwnerCurve.bClosedLoop);
+
+    const TArray<TSharedPtr<FJsonValue>>* PointArray = nullptr;
+    if (!CurveOwnerObject->Get()->TryGetArrayField(TEXT("points"), PointArray) || PointArray == nullptr)
+    {
+        return true;
+    }
+
+    OutCapabilities.OwnerCurve.Points.Reserve(PointArray->Num());
+    for (const TSharedPtr<FJsonValue>& PointValue : *PointArray)
+    {
+        const TSharedPtr<FJsonObject>* PointObject = nullptr;
+        if (!PointValue.IsValid() || !PointValue->TryGetObject(PointObject) || PointObject == nullptr || !PointObject->IsValid())
+        {
+            continue;
+        }
+
+        FBridgeCurveOwnerPoint Point;
+        FString PointTypeText;
+        double RollDegrees = 0.0;
+        TryReadVectorField(*PointObject, TEXT("position"), Point.Position);
+        TryReadVectorField(*PointObject, TEXT("arrive_tangent"), Point.ArriveTangent);
+        TryReadVectorField(*PointObject, TEXT("leave_tangent"), Point.LeaveTangent);
+        PointObject->Get()->TryGetNumberField(TEXT("roll_degrees"), RollDegrees);
+        Point.RollDegrees = static_cast<float>(RollDegrees);
+        TryReadScaleField(*PointObject, TEXT("scale"), Point.Scale);
+        PointObject->Get()->TryGetStringField(TEXT("point_type"), PointTypeText);
+        Point.Type = ParseSplinePointType(PointTypeText);
+        OutCapabilities.OwnerCurve.Points.Add(MoveTemp(Point));
+    }
+
+    return true;
+}
+
 bool BlenderBridge::ParseTargetDescriptors(const TSharedPtr<FJsonObject>& Payload, TArray<FBridgeTargetDescriptor>& OutTargets)
 {
     OutTargets.Reset();
@@ -316,6 +473,7 @@ bool BlenderBridge::ParseTargetDescriptors(const TSharedPtr<FJsonObject>& Payloa
         EntryObject->Get()->TryGetStringField(TEXT("label"), Target.DisplayLabel);
         EntryObject->Get()->TryGetStringField(TEXT("object_name"), Target.ObjectName);
         EntryObject->Get()->TryGetStringField(TEXT("modifier_name"), Target.ModifierName);
+        EntryObject->Get()->TryGetStringField(TEXT("object_type"), Target.ObjectType);
 
         if (Target.DisplayLabel.IsEmpty())
         {
@@ -522,4 +680,46 @@ void BlenderBridge::AddInputValuesToPayload(const TArray<FBridgeInputSchema>& Sc
     }
 
     Payload->SetObjectField(TEXT("values"), ValuesObject);
+}
+
+void BlenderBridge::AddCurveOwnerDataToPayload(const FBridgeCurveOwnerData& CurveOwnerData, const TSharedRef<FJsonObject>& Payload)
+{
+    TSharedRef<FJsonObject> CurveOwnerObject = MakeShared<FJsonObject>();
+    CurveOwnerObject->SetStringField(TEXT("curve_type"), CurveTypeToString(CurveOwnerData.CurveType));
+    CurveOwnerObject->SetBoolField(TEXT("closed"), CurveOwnerData.bClosedLoop);
+
+    TArray<TSharedPtr<FJsonValue>> PointArray;
+    PointArray.Reserve(CurveOwnerData.Points.Num());
+    for (const FBridgeCurveOwnerPoint& Point : CurveOwnerData.Points)
+    {
+        TSharedRef<FJsonObject> PointObject = MakeShared<FJsonObject>();
+        SetVectorField(PointObject, TEXT("position"), Point.Position);
+        SetVectorField(PointObject, TEXT("arrive_tangent"), Point.ArriveTangent);
+        SetVectorField(PointObject, TEXT("leave_tangent"), Point.LeaveTangent);
+        PointObject->SetNumberField(TEXT("roll_degrees"), Point.RollDegrees);
+        SetScaleField(PointObject, TEXT("scale"), Point.Scale);
+        PointObject->SetStringField(TEXT("point_type"), SplinePointTypeToString(Point.Type));
+        PointArray.Add(MakeShared<FJsonValueObject>(PointObject));
+    }
+
+    CurveOwnerObject->SetArrayField(TEXT("points"), PointArray);
+    Payload->SetObjectField(CurveOwnerFieldName, CurveOwnerObject);
+}
+
+bool BlenderBridge::SerializeCurveOwnerData(const FBridgeCurveOwnerData& CurveOwnerData, FString& OutSerializedJson)
+{
+    TSharedRef<FJsonObject> CurveOwnerObject = MakeShared<FJsonObject>();
+    AddCurveOwnerDataToPayload(CurveOwnerData, CurveOwnerObject);
+
+    const TSharedPtr<FJsonObject>* NestedCurveOwnerObject = nullptr;
+    if (!CurveOwnerObject->TryGetObjectField(CurveOwnerFieldName, NestedCurveOwnerObject) || NestedCurveOwnerObject == nullptr || !NestedCurveOwnerObject->IsValid())
+    {
+        OutSerializedJson.Reset();
+        return false;
+    }
+
+    OutSerializedJson.Reset();
+    using FCurveOwnerJsonWriter = TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>;
+    TSharedRef<FCurveOwnerJsonWriter> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutSerializedJson);
+    return FJsonSerializer::Serialize(*NestedCurveOwnerObject, Writer);
 }

@@ -29,6 +29,32 @@ enum class EBlenderBridgeComponentStatus : uint8
 };
 
 UENUM(BlueprintType)
+enum class EBlenderBridgeTargetKind : uint8
+{
+    Unknown,
+    Standard,
+    CurveOwner
+};
+
+UENUM(BlueprintType)
+enum class EBlenderBridgeCurveType : uint8
+{
+    None,
+    Bezier,
+    Unsupported
+};
+
+UENUM(BlueprintType)
+enum class EBlenderBridgeSplinePointType : uint8
+{
+    Linear,
+    Curve,
+    Constant,
+    CurveClamped,
+    CurveCustomTangent
+};
+
+UENUM(BlueprintType)
 enum class EBlenderBridgeInputType : uint8
 {
     Float,
@@ -54,6 +80,63 @@ struct FBridgeEnumOption
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
     int32 Value = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeCurveOwnerPoint
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FVector Position = FVector::ZeroVector;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FVector ArriveTangent = FVector::ZeroVector;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FVector LeaveTangent = FVector::ZeroVector;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    float RollDegrees = 0.0f;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FVector Scale = FVector::OneVector;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    EBlenderBridgeSplinePointType Type = EBlenderBridgeSplinePointType::Curve;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeCurveOwnerData
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    EBlenderBridgeCurveType CurveType = EBlenderBridgeCurveType::None;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    bool bClosedLoop = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    TArray<FBridgeCurveOwnerPoint> Points;
+};
+
+USTRUCT(BlueprintType)
+struct FBridgeTargetCapabilities
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    EBlenderBridgeTargetKind TargetKind = EBlenderBridgeTargetKind::Unknown;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    bool bSupportsCurveOwner = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString CompatibilityMessage;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FBridgeCurveOwnerData OwnerCurve;
 };
 
 USTRUCT(BlueprintType)
@@ -120,6 +203,9 @@ struct FBridgeTargetDescriptor
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
     FString ModifierName;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString ObjectType;
 };
 
 USTRUCT(BlueprintType)
@@ -201,6 +287,7 @@ enum class EBlenderBridgeMessageType : uint8
     DescribeTarget,
     TargetDescription,
     CookTarget,
+    ReleaseComponentState,
     CookComplete,
     ResizeRequired,
     Error,

@@ -5,6 +5,7 @@
 #include "BlenderBridgeActor.generated.h"
 
 class UBlenderBridgeComponent;
+class USplineComponent;
 
 UCLASS(ClassGroup = (Blender), ComponentWrapperClass, ConversionRoot)
 class BLENDERBRIDGERUNTIME_API ABlenderBridgeActor : public AActor
@@ -32,7 +33,13 @@ public:
     UFUNCTION(BlueprintPure, Category = "Blender Bridge")
     UBlenderBridgeComponent* GetBridgeComponent() const;
 
+    UFUNCTION(BlueprintPure, Category = "Blender Bridge")
+    USplineComponent* GetBridgeSplineComponent() const;
+
 private:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge", meta = (AllowPrivateAccess = "true"))
     TObjectPtr<UBlenderBridgeComponent> BridgeComponent;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge", meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<USplineComponent> BridgeSplineComponent;
 };

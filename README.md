@@ -12,6 +12,7 @@ Today it can:
 - drag a `BlenderBridgeSource` into the level to spawn a configured `BlenderBridgeActor`
 - discover multiple Geometry Nodes targets per `.blend`
 - reflect and drive one selected Geometry Nodes target per actor, including enums and Blender interface panel groupings
+- import and drive a curve-owner spline target from Unreal when the target object is a Bezier curve with a GN modifier that consumes owner `Geometry`
 - preview the cooked result in Unreal with `UProceduralMeshComponent`
 - bake the cooked result to a static mesh asset and spawned baked actor in the editor
 - preserve one authored UV channel on baked static meshes even when the UE 5.7 build path pads render texcoords
@@ -38,6 +39,7 @@ Today it can:
 - A selected Geometry Nodes target can be loaded from a `.blend` file and streamed into Unreal as triangle-expanded geometry.
 - World transforms and basic Blender-to-Unreal coordinate conversion are applied during extraction.
 - A Geometry Nodes target can expose and accept `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum` inputs in real-mesh mode.
+- Curve-owner targets can import their authored Blender Bezier curve into the embedded Unreal spline and recook from Unreal spline edits without mutating the loaded source object.
 - Reflected GN inputs preserve Blender interface panel hierarchy in the Unreal details panel.
 - Oversized cooks can trigger an automatic worker restart with a larger shared-memory mapping and then retry.
 - The cooked preview can be baked to a static mesh asset with stable material slots, placeholder materials, and a spawned baked actor.
@@ -57,9 +59,10 @@ Today it can:
 8. If the source exposes multiple Geometry Nodes targets, choose one in `Target`.
 9. Click `Refresh Input Schema` if needed and wait for `Input Schema` and `Input Values` to populate.
 10. Edit reflected values in `Input Values`.
-11. Click `Request Cook` and confirm the procedural preview updates in the viewport.
-12. If you want a baked asset, click `Bake To Static Mesh`.
-13. Use `Select Baked Output` to focus the baked actor or asset, and `Delete Baked Output` to remove generated bake content.
+11. If the target is a curve-owner spline tool, confirm the embedded `Bridge Spline Component` imports the authored Blender curve and edit spline points directly in the viewport.
+12. Click `Request Cook` and confirm the procedural preview updates in the viewport.
+13. If you want a baked asset, click `Bake To Static Mesh`.
+14. Use `Select Baked Output` to focus the baked actor or asset, and `Delete Baked Output` to remove generated bake content.
 
 ## Bake Workflow Notes
 
@@ -89,6 +92,16 @@ Target behavior today:
 - if a source has multiple targets, the component requires a target selection
 - if a previously saved target no longer exists after reload, the component clears the selection and marks the target unresolved
 - each cook evaluates only the selected target and returns that target's mesh output
+- curve-owner mode is supported when the selected target object is a `CURVE`, its GN modifier consumes owner `Geometry`, and the curve contains exactly one Bezier spline
+- curve-owner cooks use a hidden per-actor duplicate inside the Blender worker so multiple Unreal actors can share one source without overwriting each other
+
+Curve-owner authoring contract today:
+
+- Put the `NODES` modifier on the curve object that owns the authored spline.
+- Build the graph from `Group Input -> Geometry`.
+- Use one Bezier spline on that owner curve.
+- Keep non-primitive sockets such as `Collection` authored in Blender; Unreal preserves those defaults but does not expose them for editing yet.
+- The local machine acceptance example used during development is `C:\Users\Lassiter\Downloads\Blender_Geo\Curve.blend`.
 
 Supported reflected socket types today:
 
