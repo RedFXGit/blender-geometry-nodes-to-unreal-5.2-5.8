@@ -41,6 +41,8 @@ public:
 
     FBlenderBridgeSharedMemoryRegion& GetSharedMemory() { return SharedMemory; }
     const FBlenderBridgeSharedMemoryRegion& GetSharedMemory() const { return SharedMemory; }
+    FBlenderBridgeInstanceBakeSharedMemoryRegion& GetInstanceBakeSharedMemory() { return InstanceBakeSharedMemory; }
+    const FBlenderBridgeInstanceBakeSharedMemoryRegion& GetInstanceBakeSharedMemory() const { return InstanceBakeSharedMemory; }
 
     FOnStateChanged OnStateChanged;
     FOnMessageReceived OnMessageReceived;
@@ -65,9 +67,11 @@ private:
     FBlenderBridgeWorkerConfig Config;
     FString PipeName;
     FString SharedMemoryName;
+    FString InstanceBakeSharedMemoryName;
     FProcHandle ProcessHandle;
     FBlenderBridgePipeClient PipeClient;
     FBlenderBridgeSharedMemoryRegion SharedMemory;
+    FBlenderBridgeInstanceBakeSharedMemoryRegion InstanceBakeSharedMemory;
     TFuture<void> StartupTask;
     TFuture<void> ListenerTask;
     TFuture<void> SendTask;

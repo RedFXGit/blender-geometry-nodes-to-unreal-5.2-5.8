@@ -4,7 +4,7 @@
 #include "Containers/Ticker.h"
 #include "Components/SceneComponent.h"
 #include "Engine/StaticMesh.h"
-#include "Engine/StaticMeshActor.h"
+#include "GameFramework/Actor.h"
 #include "StructUtils/PropertyBag.h"
 #include "UObject/NoExportTypes.h"
 
@@ -19,6 +19,7 @@ class UStaticMesh;
 class UUserDefinedEnum;
 class FBlenderBridgeSessionManager;
 class FBlenderBridgeBakeService;
+class ABlenderBridgeActor;
 
 USTRUCT(BlueprintType)
 struct FBlenderBridgeMaterialOverride
@@ -56,6 +57,21 @@ struct FBlenderBridgeGeneratedMaterialReference
     TSoftObjectPtr<UMaterialInterface> Material;
 };
 
+USTRUCT(BlueprintType)
+struct FBlenderBridgeBakedPrototypeMeshReference
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
+    FString SourceScopeKey;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
+    FString PrototypeKey;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
+    TSoftObjectPtr<UStaticMesh> Mesh;
+};
+
 UCLASS(ClassGroup = (Blender), meta = (BlueprintSpawnableComponent))
 class BLENDERBRIDGERUNTIME_API UBlenderBridgeComponent : public USceneComponent
 {
@@ -72,7 +88,7 @@ public:
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge", meta = (DisplayName = "Request Cook"))
     void RequestCook();
 
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge|Bake", meta = (DisplayName = "Bake To Static Mesh"))
+    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge|Bake", meta = (DisplayName = "Bake Output"))
     void BakeToStaticMesh();
 
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge|Bake", meta = (DisplayName = "Select Baked Output"))
@@ -140,11 +156,17 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
     TArray<FBlenderBridgeMaterialOverride> MaterialOverrides;
 
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake", meta = (DisplayName = "Bake Output Mode"))
+    EBlenderBridgeBakeOutputMode BakeOutputMode = EBlenderBridgeBakeOutputMode::StaticMesh;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
     TSoftObjectPtr<UStaticMesh> BakedStaticMesh;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
-    TSoftObjectPtr<AStaticMeshActor> BakedActor;
+    TSoftObjectPtr<AActor> BakedActor;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
+    TArray<FBlenderBridgeBakedPrototypeMeshReference> BakedPrototypeMeshes;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
     TArray<FBlenderBridgeGeneratedMaterialReference> GeneratedBakeMaterials;
@@ -187,8 +209,11 @@ private:
     void UpdatePreviewVisibility();
     void UpdateBakedOutputVisibility();
     void ApplyPreviewMaterials();
+    USplineComponent* EnsureBridgeSplineComponent();
+    void RemoveOwnedBridgeSplineComponent();
     UMaterialInterface* FindOverrideMaterialBySlotId(const FString& SlotId) const;
     bool HasCookedMesh() const;
+    bool HasBakedOutput() const;
 
 private:
     friend class FBlenderBridgeSessionManager;
@@ -211,6 +236,7 @@ private:
     FString ImportedCurveHash;
     bool bHasValidCookedMesh = false;
     bool bPendingBakeAfterCook = false;
+    bool bPendingInstancedBake = false;
     bool bSplineEditedSinceImport = false;
     bool bSuppressSplineNotifications = false;
     bool bSuppressPostEditNotifications = false;

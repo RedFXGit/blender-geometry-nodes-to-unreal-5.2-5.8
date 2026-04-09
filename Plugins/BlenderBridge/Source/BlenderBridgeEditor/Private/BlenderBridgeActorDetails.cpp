@@ -57,7 +57,7 @@ void FBlenderBridgeActorDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBu
         .Padding(6.0f, 0.0f, 0.0f, 0.0f)
         [
             SNew(SButton)
-            .Text(FText::FromString(TEXT("Bake To Static Mesh")))
+            .Text(FText::FromString(TEXT("Bake Output")))
             .OnClicked(this, &FBlenderBridgeActorDetails::HandleBakeToStaticMeshClicked)
         ]
     ];

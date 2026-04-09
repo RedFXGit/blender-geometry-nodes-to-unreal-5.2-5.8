@@ -1,16 +1,22 @@
 #include "BlenderBridgeBakeService.h"
 
 #include "BlenderBridgeComponent.h"
+#include "BlenderBridgeRuntimeModule.h"
+#include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSettings.h"
 #include "BlenderBridgeSource.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Editor.h"
+#include "Engine/World.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "Factories/MaterialFactoryNew.h"
 #include "Factories/MaterialInstanceConstantFactoryNew.h"
+#include "GameFramework/Actor.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -18,12 +24,15 @@
 #include "MeshDescription.h"
 #include "MeshDescriptionBuilder.h"
 #include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
 #include "Modules/ModuleManager.h"
 #include "ObjectTools.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "RenderingThread.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshResources.h"
+#include "UObject/UObjectIterator.h"
 #include "UObject/Package.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBlenderBridgeBake, Log, All);
@@ -32,8 +41,10 @@ namespace
 {
     constexpr TCHAR PlaceholderParentMaterialName[] = TEXT("M_BlenderBridgePlaceholderParent");
     constexpr TCHAR PlaceholderSupportFolderName[] = TEXT("_BridgeSupport");
+    constexpr TCHAR SharedPrototypeFolderName[] = TEXT("_SharedPrototypes");
     constexpr TCHAR PlaceholderParameterName[] = TEXT("BaseColor");
     constexpr TCHAR BakeBuildPathTag[] = TEXT("[BlenderBridgeBakePath:EditorBuildSync_v2]");
+    constexpr TCHAR BakedHismComponentNamePrefix[] = TEXT("BlenderBridgeBakedHISM");
 
     FString NormalizeBakeRootPath(const FString& InPath)
     {
@@ -123,6 +134,32 @@ namespace
             *GetSourceSegment(Component),
             *GetOwnerSegment(Component),
             *GetTargetSegment(Component));
+    }
+
+    FString BuildSourceScopeKey(const UBlenderBridgeComponent* Component)
+    {
+        if (Component == nullptr || Component->Source == nullptr || Component->Source->BlendFile.FilePath.IsEmpty())
+        {
+            return FString();
+        }
+
+        FString SourceHandle = FPaths::ConvertRelativePathToFull(Component->Source->BlendFile.FilePath);
+        FPaths::NormalizeFilename(SourceHandle);
+        return SourceHandle;
+    }
+
+    FString BuildSharedPrototypeFolderPath(const UBlenderBridgeComponent* Component)
+    {
+        const UBlenderBridgeSettings* Settings = GetDefault<UBlenderBridgeSettings>();
+        const FString RootPath = NormalizeBakeRootPath(Settings != nullptr ? Settings->BakeRootContentPath : FString());
+        const FString SourceScopeKey = BuildSourceScopeKey(Component);
+        if (SourceScopeKey.IsEmpty())
+        {
+            return FString::Printf(TEXT("%s/%s"), *RootPath, SharedPrototypeFolderName);
+        }
+
+        const FString ScopeHash = FMD5::HashAnsiString(*SourceScopeKey).Left(16);
+        return FString::Printf(TEXT("%s/Blend_%s/%s"), *RootPath, *ScopeHash, SharedPrototypeFolderName);
     }
 
     FString BuildAssetObjectPath(const FString& PackagePath, const FString& AssetName)
@@ -244,6 +281,20 @@ namespace
             Section.IndexCount >= 3 &&
             Section.FirstIndex + Section.IndexCount <= Mesh.Triangles.Num();
     }
+
+    struct FResolvedBakeMaterials
+    {
+        TMap<FString, TObjectPtr<UMaterialInterface>> MaterialsBySlotId;
+        TArray<FBlenderBridgeGeneratedMaterialReference> GeneratedMaterials;
+    };
+
+    struct FBakedOutputSnapshot
+    {
+        TWeakObjectPtr<AActor> Actor;
+        TSoftObjectPtr<UStaticMesh> StaticMesh;
+        TArray<FBlenderBridgeGeneratedMaterialReference> GeneratedMaterials;
+        TArray<FBlenderBridgeBakedPrototypeMeshReference> PrototypeMeshes;
+    };
 
     int32 GetRenderTexCoordCount(const UStaticMesh* StaticMesh, int32 LODIndex)
     {
@@ -380,14 +431,13 @@ namespace
         return bShrinkApplied;
     }
 
-    UStaticMesh* BuildOrUpdateStaticMesh(
-        UBlenderBridgeComponent* Component,
-        const FString& BakeFolderPath,
+    UStaticMesh* BuildOrUpdateStaticMeshAsset(
+        const FString& MeshesFolderPath,
+        const FString& MeshAssetName,
+        const FBridgeDecodedMesh& CookedMesh,
+        const TArray<FBridgeMaterialSlotDescriptor>& MaterialSlots,
         const TArray<UMaterialInterface*>& ResolvedMaterials)
     {
-        const FString MeshesFolderPath = FString::Printf(TEXT("%s/Meshes"), *BakeFolderPath);
-        const FString MeshAssetName = FString::Printf(TEXT("SM_%s"), *GetOwnerSegment(Component));
-
         UStaticMesh* StaticMesh = LoadAssetByPath<UStaticMesh>(MeshesFolderPath, MeshAssetName);
         if (StaticMesh == nullptr)
         {
@@ -438,10 +488,10 @@ namespace
         SourceModel.BuildSettings.bUseFullPrecisionUVs = false;
 
         TArray<FStaticMaterial> StaticMaterials;
-        StaticMaterials.Reserve(Component->LastCookedMaterialSlots.Num());
-        for (int32 SlotIndex = 0; SlotIndex < Component->LastCookedMaterialSlots.Num(); ++SlotIndex)
+        StaticMaterials.Reserve(MaterialSlots.Num());
+        for (int32 SlotIndex = 0; SlotIndex < MaterialSlots.Num(); ++SlotIndex)
         {
-            const FBridgeMaterialSlotDescriptor& Slot = Component->LastCookedMaterialSlots[SlotIndex];
+            const FBridgeMaterialSlotDescriptor& Slot = MaterialSlots[SlotIndex];
             UMaterialInterface* MaterialInterface = ResolvedMaterials.IsValidIndex(SlotIndex) ? ResolvedMaterials[SlotIndex] : nullptr;
             StaticMaterials.Add(FStaticMaterial(
                 MaterialInterface,
@@ -457,7 +507,6 @@ namespace
         FMeshDescriptionBuilder Builder;
         Builder.SetMeshDescription(&MeshDescription);
         Builder.SetNumUVLayers(1);
-        const FBridgeDecodedMesh& CookedMesh = Component->GetLastCookedMesh();
         Builder.ReserveNewVertices(CookedMesh.Positions.Num());
 
         UE_LOG(
@@ -471,8 +520,8 @@ namespace
             CookedMesh.Triangles.Num() / 3);
 
         TArray<FPolygonGroupID> PolygonGroups;
-        PolygonGroups.Reserve(Component->LastCookedMaterialSlots.Num());
-        for (const FBridgeMaterialSlotDescriptor& Slot : Component->LastCookedMaterialSlots)
+        PolygonGroups.Reserve(MaterialSlots.Num());
+        for (const FBridgeMaterialSlotDescriptor& Slot : MaterialSlots)
         {
             PolygonGroups.Add(Builder.AppendPolygonGroup(FName(*Slot.SlotId)));
         }
@@ -580,6 +629,215 @@ namespace
         return StaticMesh;
     }
 
+    void GatherInstanceBakeMaterialSlots(const FBridgeDecodedInstanceBake& InstanceBake, TArray<FBridgeMaterialSlotDescriptor>& OutSlots)
+    {
+        OutSlots.Reset();
+
+        TSet<FString> SeenSlotIds;
+        for (const FBridgeInstanceBakePrototype& Prototype : InstanceBake.Prototypes)
+        {
+            for (const FBridgeMaterialSlotDescriptor& Slot : Prototype.Mesh.MaterialSlots)
+            {
+                if (Slot.SlotId.IsEmpty() || SeenSlotIds.Contains(Slot.SlotId))
+                {
+                    continue;
+                }
+
+                SeenSlotIds.Add(Slot.SlotId);
+                OutSlots.Add(Slot);
+            }
+        }
+    }
+
+    UMaterialInterface* FindMaterialOverrideBySlotId(const UBlenderBridgeComponent* Component, const FString& SlotId)
+    {
+        if (Component == nullptr)
+        {
+            return nullptr;
+        }
+
+        for (const FBlenderBridgeMaterialOverride& Entry : Component->MaterialOverrides)
+        {
+            if (Entry.SlotId == SlotId)
+            {
+                return Entry.Material;
+            }
+        }
+
+        return nullptr;
+    }
+
+    void ResolveMaterialsForSlots(
+        UBlenderBridgeComponent* Component,
+        const TArray<FBridgeMaterialSlotDescriptor>& Slots,
+        const FString& MaterialsFolderPath,
+        UMaterialInterface* PlaceholderParent,
+        FResolvedBakeMaterials& OutResolution)
+    {
+        OutResolution.MaterialsBySlotId.Reset();
+        OutResolution.GeneratedMaterials.Reset();
+
+        TSet<FString> AddedGeneratedSlotIds;
+        for (const FBridgeMaterialSlotDescriptor& Slot : Slots)
+        {
+            if (Slot.SlotId.IsEmpty() || OutResolution.MaterialsBySlotId.Contains(Slot.SlotId))
+            {
+                continue;
+            }
+
+            if (UMaterialInterface* OverrideMaterial = FindMaterialOverrideBySlotId(Component, Slot.SlotId))
+            {
+                OutResolution.MaterialsBySlotId.Add(Slot.SlotId, OverrideMaterial);
+                continue;
+            }
+
+            UMaterialInstanceConstant* PlaceholderInstance = EnsurePlaceholderMaterialInstance(MaterialsFolderPath, Slot, PlaceholderParent);
+            OutResolution.MaterialsBySlotId.Add(Slot.SlotId, PlaceholderInstance);
+            if (PlaceholderInstance == nullptr || AddedGeneratedSlotIds.Contains(Slot.SlotId))
+            {
+                continue;
+            }
+
+            AddedGeneratedSlotIds.Add(Slot.SlotId);
+            FBlenderBridgeGeneratedMaterialReference GeneratedReference;
+            GeneratedReference.SlotId = Slot.SlotId;
+            GeneratedReference.SlotName = Slot.SlotName;
+            GeneratedReference.BlenderMaterialName = Slot.BlenderMaterialName;
+            GeneratedReference.Material = PlaceholderInstance;
+            OutResolution.GeneratedMaterials.Add(MoveTemp(GeneratedReference));
+        }
+    }
+
+    TArray<UMaterialInterface*> BuildResolvedMaterialsForSlotList(
+        const TArray<FBridgeMaterialSlotDescriptor>& Slots,
+        const FResolvedBakeMaterials& ResolvedMaterials)
+    {
+        TArray<UMaterialInterface*> Materials;
+        Materials.Reserve(Slots.Num());
+        for (const FBridgeMaterialSlotDescriptor& Slot : Slots)
+        {
+            if (const TObjectPtr<UMaterialInterface>* Material = ResolvedMaterials.MaterialsBySlotId.Find(Slot.SlotId))
+            {
+                Materials.Add(Material->Get());
+            }
+            else
+            {
+                Materials.Add(nullptr);
+            }
+        }
+
+        return Materials;
+    }
+
+    EComponentMobility::Type GetSourceMobility(const UBlenderBridgeComponent* Component)
+    {
+        if (Component == nullptr || Component->GetOwner() == nullptr || Component->GetOwner()->GetRootComponent() == nullptr)
+        {
+            return EComponentMobility::Movable;
+        }
+
+        return static_cast<EComponentMobility::Type>(Component->GetOwner()->GetRootComponent()->Mobility.GetValue());
+    }
+
+    void AttachBakedActorToSource(UBlenderBridgeComponent* Component, AActor* BakedActor)
+    {
+        if (Component == nullptr || Component->GetOwner() == nullptr || BakedActor == nullptr)
+        {
+            return;
+        }
+
+        AActor* SourceActor = Component->GetOwner();
+        BakedActor->SetActorTransform(SourceActor->GetActorTransform());
+        BakedActor->SetActorLabel(FString::Printf(TEXT("%s Baked"), *GetOwnerSegment(Component)));
+
+        if (USceneComponent* SourceRootComponent = SourceActor->GetRootComponent())
+        {
+            BakedActor->AttachToComponent(SourceRootComponent, FAttachmentTransformRules::KeepWorldTransform);
+        }
+        else
+        {
+            BakedActor->AttachToActor(SourceActor, FAttachmentTransformRules::KeepWorldTransform);
+        }
+
+#if WITH_EDITOR
+        BakedActor->SetFolderPath(SourceActor->GetFolderPath());
+#endif
+    }
+
+    USceneComponent* EnsureActorRootComponent(AActor* Actor, const EComponentMobility::Type Mobility)
+    {
+        if (Actor == nullptr)
+        {
+            return nullptr;
+        }
+
+        USceneComponent* RootComponent = Actor->GetRootComponent();
+        if (RootComponent == nullptr)
+        {
+            RootComponent = NewObject<USceneComponent>(Actor, TEXT("BlenderBridgeBakedRoot"), RF_Transactional);
+            if (RootComponent == nullptr)
+            {
+                return nullptr;
+            }
+
+            Actor->AddInstanceComponent(RootComponent);
+            Actor->SetRootComponent(RootComponent);
+            RootComponent->RegisterComponent();
+        }
+
+        RootComponent->SetMobility(Mobility);
+        return RootComponent;
+    }
+
+    AActor* SpawnAttachedActor(UBlenderBridgeComponent* Component, UClass* ActorClass)
+    {
+        if (Component == nullptr || Component->GetOwner() == nullptr || ActorClass == nullptr)
+        {
+            return nullptr;
+        }
+
+        AActor* SourceActor = Component->GetOwner();
+        UWorld* World = SourceActor->GetWorld();
+        if (World == nullptr)
+        {
+            return nullptr;
+        }
+
+        FActorSpawnParameters SpawnParameters;
+        SpawnParameters.Owner = SourceActor;
+        SpawnParameters.OverrideLevel = SourceActor->GetLevel();
+        SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        AActor* BakedActor = World->SpawnActor<AActor>(ActorClass, SourceActor->GetActorTransform(), SpawnParameters);
+        if (BakedActor == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (EnsureActorRootComponent(BakedActor, GetSourceMobility(Component)) == nullptr)
+        {
+            World->EditorDestroyActor(BakedActor, true);
+            return nullptr;
+        }
+
+        AttachBakedActorToSource(Component, BakedActor);
+        return BakedActor;
+    }
+
+    FBakedOutputSnapshot CaptureBakedOutputSnapshot(const UBlenderBridgeComponent* Component)
+    {
+        FBakedOutputSnapshot Snapshot;
+        if (Component == nullptr)
+        {
+            return Snapshot;
+        }
+
+        Snapshot.Actor = Component->BakedActor.Get();
+        Snapshot.StaticMesh = Component->BakedStaticMesh;
+        Snapshot.GeneratedMaterials = Component->GeneratedBakeMaterials;
+        Snapshot.PrototypeMeshes = Component->BakedPrototypeMeshes;
+        return Snapshot;
+    }
+
     AStaticMeshActor* SpawnOrUpdateBakedActor(UBlenderBridgeComponent* Component, UStaticMesh* StaticMesh)
     {
         if (Component == nullptr || Component->GetOwner() == nullptr || StaticMesh == nullptr)
@@ -594,7 +852,7 @@ namespace
             return nullptr;
         }
 
-        AStaticMeshActor* BakedActor = Component->BakedActor.Get();
+        AStaticMeshActor* BakedActor = Cast<AStaticMeshActor>(Component->BakedActor.Get());
         if (!IsValid(BakedActor) || BakedActor->GetWorld() != World)
         {
             FActorSpawnParameters SpawnParameters;
@@ -608,100 +866,355 @@ namespace
             }
         }
 
-        BakedActor->SetActorTransform(SourceActor->GetActorTransform());
-        BakedActor->SetActorLabel(FString::Printf(TEXT("%s Baked"), *GetOwnerSegment(Component)));
-
-        USceneComponent* SourceRootComponent = SourceActor->GetRootComponent();
+        AttachBakedActorToSource(Component, BakedActor);
         if (UStaticMeshComponent* StaticMeshComponent = BakedActor->GetStaticMeshComponent())
         {
-            const EComponentMobility::Type TargetMobility = SourceRootComponent != nullptr
-                ? static_cast<EComponentMobility::Type>(SourceRootComponent->Mobility.GetValue())
-                : EComponentMobility::Movable;
-            StaticMeshComponent->SetMobility(TargetMobility);
-        }
-
-        if (SourceRootComponent != nullptr)
-        {
-            BakedActor->AttachToComponent(SourceRootComponent, FAttachmentTransformRules::KeepWorldTransform);
-        }
-        else
-        {
-            BakedActor->AttachToActor(SourceActor, FAttachmentTransformRules::KeepWorldTransform);
-        }
-#if WITH_EDITOR
-        BakedActor->SetFolderPath(SourceActor->GetFolderPath());
-#endif
-
-        if (UStaticMeshComponent* StaticMeshComponent = BakedActor->GetStaticMeshComponent())
-        {
+            StaticMeshComponent->SetMobility(GetSourceMobility(Component));
             StaticMeshComponent->SetStaticMesh(StaticMesh);
         }
 
         return BakedActor;
+    }
+
+    void CollectReferencedPrototypePaths(
+        const UBlenderBridgeComponent* ExcludedComponent,
+        const FString& SourceScopeKey,
+        TSet<FSoftObjectPath>& OutReferencedPaths)
+    {
+        OutReferencedPaths.Reset();
+
+        if (SourceScopeKey.IsEmpty())
+        {
+            return;
+        }
+
+        for (TObjectIterator<UBlenderBridgeComponent> It; It; ++It)
+        {
+            const UBlenderBridgeComponent* Component = *It;
+            if (!IsValid(Component) || Component == ExcludedComponent || Component->HasAnyFlags(RF_ClassDefaultObject))
+            {
+                continue;
+            }
+
+            for (const FBlenderBridgeBakedPrototypeMeshReference& PrototypeReference : Component->BakedPrototypeMeshes)
+            {
+                if (PrototypeReference.SourceScopeKey != SourceScopeKey)
+                {
+                    continue;
+                }
+
+                const FSoftObjectPath MeshPath = PrototypeReference.Mesh.ToSoftObjectPath();
+                if (MeshPath.IsValid())
+                {
+                    OutReferencedPaths.Add(MeshPath);
+                }
+            }
+        }
+    }
+
+    void CleanupReplacedBakedOutput(UBlenderBridgeComponent* Component, const FBakedOutputSnapshot& PreviousOutput)
+    {
+        if (Component == nullptr)
+        {
+            return;
+        }
+
+        if (AActor* PreviousActor = PreviousOutput.Actor.Get())
+        {
+            if (PreviousActor != Component->BakedActor.Get())
+            {
+                if (UWorld* World = PreviousActor->GetWorld())
+                {
+                    World->EditorDestroyActor(PreviousActor, true);
+                }
+            }
+        }
+
+        TArray<UObject*> AssetsToDelete;
+        if (UStaticMesh* PreviousStaticMesh = PreviousOutput.StaticMesh.LoadSynchronous())
+        {
+            if (PreviousStaticMesh != Component->BakedStaticMesh.LoadSynchronous())
+            {
+                AssetsToDelete.AddUnique(PreviousStaticMesh);
+            }
+        }
+
+        TSet<FSoftObjectPath> CurrentGeneratedMaterialPaths;
+        for (const FBlenderBridgeGeneratedMaterialReference& MaterialReference : Component->GeneratedBakeMaterials)
+        {
+            const FSoftObjectPath MaterialPath = MaterialReference.Material.ToSoftObjectPath();
+            if (MaterialPath.IsValid())
+            {
+                CurrentGeneratedMaterialPaths.Add(MaterialPath);
+            }
+        }
+
+        for (const FBlenderBridgeGeneratedMaterialReference& MaterialReference : PreviousOutput.GeneratedMaterials)
+        {
+            const FSoftObjectPath MaterialPath = MaterialReference.Material.ToSoftObjectPath();
+            if (!MaterialPath.IsValid() || CurrentGeneratedMaterialPaths.Contains(MaterialPath))
+            {
+                continue;
+            }
+
+            if (UMaterialInterface* Material = MaterialReference.Material.LoadSynchronous())
+            {
+                AssetsToDelete.AddUnique(Material);
+            }
+        }
+
+        TSet<FSoftObjectPath> CurrentPrototypeMeshPaths;
+        for (const FBlenderBridgeBakedPrototypeMeshReference& PrototypeReference : Component->BakedPrototypeMeshes)
+        {
+            const FSoftObjectPath MeshPath = PrototypeReference.Mesh.ToSoftObjectPath();
+            if (MeshPath.IsValid())
+            {
+                CurrentPrototypeMeshPaths.Add(MeshPath);
+            }
+        }
+
+        TMap<FString, TSet<FSoftObjectPath>> ReferencedPrototypePathsByScope;
+        for (const FBlenderBridgeBakedPrototypeMeshReference& PrototypeReference : PreviousOutput.PrototypeMeshes)
+        {
+            const FSoftObjectPath MeshPath = PrototypeReference.Mesh.ToSoftObjectPath();
+            if (!MeshPath.IsValid() || CurrentPrototypeMeshPaths.Contains(MeshPath))
+            {
+                continue;
+            }
+
+            TSet<FSoftObjectPath>* ReferencedPaths = ReferencedPrototypePathsByScope.Find(PrototypeReference.SourceScopeKey);
+            if (ReferencedPaths == nullptr)
+            {
+                TSet<FSoftObjectPath> GatheredPaths;
+                CollectReferencedPrototypePaths(Component, PrototypeReference.SourceScopeKey, GatheredPaths);
+                ReferencedPaths = &ReferencedPrototypePathsByScope.Add(PrototypeReference.SourceScopeKey, MoveTemp(GatheredPaths));
+            }
+
+            if (ReferencedPaths->Contains(MeshPath))
+            {
+                continue;
+            }
+
+            if (UStaticMesh* Mesh = PrototypeReference.Mesh.LoadSynchronous())
+            {
+                AssetsToDelete.AddUnique(Mesh);
+            }
+        }
+
+        if (!AssetsToDelete.IsEmpty())
+        {
+            ObjectTools::DeleteObjects(AssetsToDelete, false);
+        }
     }
 }
 
 
 bool FBlenderBridgeBakeService::BakeComponent(UBlenderBridgeComponent* Component)
 {
-    if (Component == nullptr || Component->GetOwner() == nullptr || !Component->HasCookedMesh())
+    if (Component == nullptr || Component->GetOwner() == nullptr)
     {
         return false;
     }
 
+    const FBakedOutputSnapshot PreviousOutput = CaptureBakedOutputSnapshot(Component);
     const bool bWasShowingBakedOutput = Component->bShowingBakedOutput;
+    bool bBakedSuccessfully = false;
 
-    const FString BakeFolderPath = BuildBakeFolderPath(Component);
-    UMaterial* PlaceholderParent = EnsurePlaceholderParentMaterial(BakeFolderPath);
-
-    const FString MaterialsFolderPath = FString::Printf(TEXT("%s/Materials"), *BakeFolderPath);
-    TArray<UMaterialInterface*> ResolvedMaterials;
-    TArray<FBlenderBridgeGeneratedMaterialReference> GeneratedMaterials;
-    ResolvedMaterials.Reserve(Component->LastCookedMaterialSlots.Num());
-    GeneratedMaterials.Reserve(Component->LastCookedMaterialSlots.Num());
-
-    for (const FBridgeMaterialSlotDescriptor& Slot : Component->LastCookedMaterialSlots)
+    if (Component->BakeOutputMode == EBlenderBridgeBakeOutputMode::StaticMesh)
     {
-        if (UMaterialInterface* OverrideMaterial = Component->FindOverrideMaterialBySlotId(Slot.SlotId))
+        if (!Component->HasCookedMesh())
         {
-            ResolvedMaterials.Add(OverrideMaterial);
-            continue;
+            return false;
         }
 
-        UMaterialInstanceConstant* PlaceholderInstance = EnsurePlaceholderMaterialInstance(MaterialsFolderPath, Slot, PlaceholderParent);
-        if (PlaceholderInstance == nullptr)
+        const FString BakeFolderPath = BuildBakeFolderPath(Component);
+        const FString MaterialsFolderPath = FString::Printf(TEXT("%s/Materials"), *BakeFolderPath);
+
+        FResolvedBakeMaterials ResolvedMaterialState;
+        ResolveMaterialsForSlots(
+            Component,
+            Component->LastCookedMaterialSlots,
+            MaterialsFolderPath,
+            EnsurePlaceholderParentMaterial(BakeFolderPath),
+            ResolvedMaterialState);
+
+        const TArray<UMaterialInterface*> ResolvedMaterials =
+            BuildResolvedMaterialsForSlotList(Component->LastCookedMaterialSlots, ResolvedMaterialState);
+        UStaticMesh* StaticMesh = BuildOrUpdateStaticMeshAsset(
+            FString::Printf(TEXT("%s/Meshes"), *BakeFolderPath),
+            FString::Printf(TEXT("SM_%s"), *GetOwnerSegment(Component)),
+            Component->GetLastCookedMesh(),
+            Component->LastCookedMaterialSlots,
+            ResolvedMaterials);
+        if (StaticMesh == nullptr)
         {
-            ResolvedMaterials.Add(nullptr);
-            continue;
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to build a baked static mesh asset."));
+            return false;
         }
 
-        ResolvedMaterials.Add(PlaceholderInstance);
+        AStaticMeshActor* BakedActor = SpawnOrUpdateBakedActor(Component, StaticMesh);
+        if (BakedActor == nullptr)
+        {
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to spawn or update the baked static mesh actor."));
+            return false;
+        }
 
-        FBlenderBridgeGeneratedMaterialReference GeneratedReference;
-        GeneratedReference.SlotId = Slot.SlotId;
-        GeneratedReference.SlotName = Slot.SlotName;
-        GeneratedReference.BlenderMaterialName = Slot.BlenderMaterialName;
-        GeneratedReference.Material = PlaceholderInstance;
-        GeneratedMaterials.Add(MoveTemp(GeneratedReference));
+        Component->BakedStaticMesh = StaticMesh;
+        Component->BakedActor = BakedActor;
+        Component->BakedPrototypeMeshes.Reset();
+        Component->GeneratedBakeMaterials = MoveTemp(ResolvedMaterialState.GeneratedMaterials);
+        Component->SetBridgeStatus(
+            EBlenderBridgeComponentStatus::Cooked,
+            FString::Printf(TEXT("Baked static mesh output to %s."), *StaticMesh->GetPathName()));
+        bBakedSuccessfully = true;
+    }
+    else
+    {
+        const FBridgeDecodedInstanceBake* InstanceBake =
+            FBlenderBridgeRuntimeModule::Get().GetSessionManager().FindCachedInstanceBake(Component);
+        if (InstanceBake == nullptr || InstanceBake->Prototypes.IsEmpty() || InstanceBake->Placements.IsEmpty())
+        {
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("No instanced bake payload is available yet."));
+            return false;
+        }
+
+        const FString ActorBakeFolderPath = BuildBakeFolderPath(Component);
+        const FString MaterialsFolderPath = FString::Printf(TEXT("%s/Materials"), *ActorBakeFolderPath);
+        const FString SharedPrototypeMeshesFolderPath = FString::Printf(TEXT("%s/Meshes"), *BuildSharedPrototypeFolderPath(Component));
+
+        TArray<FBridgeMaterialSlotDescriptor> MaterialSlots;
+        GatherInstanceBakeMaterialSlots(*InstanceBake, MaterialSlots);
+
+        FResolvedBakeMaterials ResolvedMaterialState;
+        ResolveMaterialsForSlots(
+            Component,
+            MaterialSlots,
+            MaterialsFolderPath,
+            EnsurePlaceholderParentMaterial(ActorBakeFolderPath),
+            ResolvedMaterialState);
+
+        TMap<int32, TArray<FTransform>> PlacementsByPrototypeIndex;
+        for (const FBridgeInstanceBakePlacement& Placement : InstanceBake->Placements)
+        {
+            if (Placement.PrototypeIndex >= 0 && Placement.PrototypeIndex < InstanceBake->Prototypes.Num())
+            {
+                PlacementsByPrototypeIndex.FindOrAdd(Placement.PrototypeIndex).Add(Placement.Transform);
+            }
+        }
+
+        AActor* BakedActor = SpawnAttachedActor(Component, AActor::StaticClass());
+        if (BakedActor == nullptr)
+        {
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to spawn the baked instanced actor."));
+            return false;
+        }
+
+        USceneComponent* RootComponent = EnsureActorRootComponent(BakedActor, GetSourceMobility(Component));
+        if (RootComponent == nullptr)
+        {
+            if (UWorld* World = BakedActor->GetWorld())
+            {
+                World->EditorDestroyActor(BakedActor, true);
+            }
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to initialize the baked instanced actor root."));
+            return false;
+        }
+
+        const FString SourceScopeKey = BuildSourceScopeKey(Component);
+        TArray<FBlenderBridgeBakedPrototypeMeshReference> PrototypeReferences;
+        PrototypeReferences.Reserve(InstanceBake->Prototypes.Num());
+
+        for (int32 PrototypeIndex = 0; PrototypeIndex < InstanceBake->Prototypes.Num(); ++PrototypeIndex)
+        {
+            const FBridgeInstanceBakePrototype& Prototype = InstanceBake->Prototypes[PrototypeIndex];
+            if (Prototype.PrototypeKey.IsEmpty())
+            {
+                continue;
+            }
+
+            TArray<UMaterialInterface*> NullMaterials;
+            NullMaterials.SetNum(Prototype.Mesh.MaterialSlots.Num());
+            UStaticMesh* SharedMesh = BuildOrUpdateStaticMeshAsset(
+                SharedPrototypeMeshesFolderPath,
+                FString::Printf(TEXT("SMI_%s"), *SanitizePackageSegment(Prototype.PrototypeKey)),
+                Prototype.Mesh,
+                Prototype.Mesh.MaterialSlots,
+                NullMaterials);
+            if (SharedMesh == nullptr)
+            {
+                if (UWorld* World = BakedActor->GetWorld())
+                {
+                    World->EditorDestroyActor(BakedActor, true);
+                }
+                Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to build a shared prototype mesh asset."));
+                return false;
+            }
+
+            FBlenderBridgeBakedPrototypeMeshReference PrototypeReference;
+            PrototypeReference.SourceScopeKey = SourceScopeKey;
+            PrototypeReference.PrototypeKey = Prototype.PrototypeKey;
+            PrototypeReference.Mesh = SharedMesh;
+            PrototypeReferences.Add(MoveTemp(PrototypeReference));
+
+            const TArray<FTransform>* InstanceTransforms = PlacementsByPrototypeIndex.Find(PrototypeIndex);
+            if (InstanceTransforms == nullptr || InstanceTransforms->IsEmpty())
+            {
+                continue;
+            }
+
+            UHierarchicalInstancedStaticMeshComponent* HismComponent = NewObject<UHierarchicalInstancedStaticMeshComponent>(
+                BakedActor,
+                *FString::Printf(TEXT("%s_%d"), BakedHismComponentNamePrefix, PrototypeIndex),
+                RF_Transactional);
+            if (HismComponent == nullptr)
+            {
+                if (UWorld* World = BakedActor->GetWorld())
+                {
+                    World->EditorDestroyActor(BakedActor, true);
+                }
+                Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to allocate a baked HISM component."));
+                return false;
+            }
+
+            BakedActor->AddInstanceComponent(HismComponent);
+            HismComponent->SetupAttachment(RootComponent);
+            HismComponent->SetMobility(GetSourceMobility(Component));
+            HismComponent->SetCanEverAffectNavigation(false);
+            HismComponent->SetStaticMesh(SharedMesh);
+            for (int32 SlotIndex = 0; SlotIndex < Prototype.Mesh.MaterialSlots.Num(); ++SlotIndex)
+            {
+                const FBridgeMaterialSlotDescriptor& Slot = Prototype.Mesh.MaterialSlots[SlotIndex];
+                if (const TObjectPtr<UMaterialInterface>* Material = ResolvedMaterialState.MaterialsBySlotId.Find(Slot.SlotId))
+                {
+                    HismComponent->SetMaterial(SlotIndex, Material->Get());
+                }
+            }
+
+            HismComponent->RegisterComponent();
+            for (const FTransform& Transform : *InstanceTransforms)
+            {
+                HismComponent->AddInstance(Transform);
+            }
+        }
+
+        Component->BakedActor = BakedActor;
+        Component->BakedStaticMesh = nullptr;
+        Component->BakedPrototypeMeshes = MoveTemp(PrototypeReferences);
+        Component->GeneratedBakeMaterials = MoveTemp(ResolvedMaterialState.GeneratedMaterials);
+        Component->SetBridgeStatus(
+            EBlenderBridgeComponentStatus::Cooked,
+            FString::Printf(
+                TEXT("Baked %d shared prototype meshes across %d instances."),
+                Component->BakedPrototypeMeshes.Num(),
+                InstanceBake->Placements.Num()));
+        bBakedSuccessfully = true;
     }
 
-    UStaticMesh* StaticMesh = BuildOrUpdateStaticMesh(Component, BakeFolderPath, ResolvedMaterials);
-    if (StaticMesh == nullptr)
+    if (!bBakedSuccessfully)
     {
-        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to build a baked static mesh asset."));
         return false;
     }
 
-    AStaticMeshActor* BakedActor = SpawnOrUpdateBakedActor(Component, StaticMesh);
-    if (BakedActor == nullptr)
-    {
-        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to spawn or update the baked static mesh actor."));
-        return false;
-    }
-
-    Component->BakedStaticMesh = StaticMesh;
-    Component->BakedActor = BakedActor;
-    Component->GeneratedBakeMaterials = MoveTemp(GeneratedMaterials);
     if (bWasShowingBakedOutput)
     {
         Component->SetShowingBakedOutput(true);
@@ -711,9 +1224,8 @@ bool FBlenderBridgeBakeService::BakeComponent(UBlenderBridgeComponent* Component
         Component->SetShowingBakedOutput(false);
         Component->QueueShowBakedOutputOnNextTick();
     }
-    Component->SetBridgeStatus(
-        EBlenderBridgeComponentStatus::Cooked,
-        FString::Printf(TEXT("Baked static mesh output to %s."), *StaticMesh->GetPathName()));
+
+    CleanupReplacedBakedOutput(Component, PreviousOutput);
     return true;
 }
 
@@ -724,7 +1236,7 @@ bool FBlenderBridgeBakeService::SelectBakedOutput(UBlenderBridgeComponent* Compo
         return false;
     }
 
-    if (AStaticMeshActor* BakedActor = Component->BakedActor.Get())
+    if (AActor* BakedActor = Component->BakedActor.Get())
     {
         GEditor->SelectNone(false, true, false);
         GEditor->SelectActor(BakedActor, true, true, true, true);
@@ -739,55 +1251,38 @@ bool FBlenderBridgeBakeService::SelectBakedOutput(UBlenderBridgeComponent* Compo
         return true;
     }
 
+    TArray<UObject*> ObjectsToSync;
+    for (const FBlenderBridgeBakedPrototypeMeshReference& PrototypeReference : Component->BakedPrototypeMeshes)
+    {
+        if (UStaticMesh* Mesh = PrototypeReference.Mesh.LoadSynchronous())
+        {
+            ObjectsToSync.AddUnique(Mesh);
+        }
+    }
+
+    if (!ObjectsToSync.IsEmpty())
+    {
+        GEditor->SyncBrowserToObjects(ObjectsToSync);
+        return true;
+    }
+
     return false;
 }
 
 bool FBlenderBridgeBakeService::DeleteBakedOutput(UBlenderBridgeComponent* Component)
 {
-    if (Component == nullptr)
+    if (Component == nullptr || !Component->HasBakedOutput())
     {
         return false;
     }
 
-    bool bDeletedAnything = false;
-    if (AStaticMeshActor* BakedActor = Component->BakedActor.Get())
-    {
-        if (UWorld* World = BakedActor->GetWorld())
-        {
-            World->EditorDestroyActor(BakedActor, true);
-            bDeletedAnything = true;
-        }
-    }
-
-    TArray<UObject*> AssetsToDelete;
-    if (UStaticMesh* BakedMesh = Component->BakedStaticMesh.LoadSynchronous())
-    {
-        AssetsToDelete.AddUnique(BakedMesh);
-    }
-
-    for (const FBlenderBridgeGeneratedMaterialReference& GeneratedMaterial : Component->GeneratedBakeMaterials)
-    {
-        if (UMaterialInterface* Material = GeneratedMaterial.Material.LoadSynchronous())
-        {
-            AssetsToDelete.AddUnique(Material);
-        }
-    }
-
-    if (!AssetsToDelete.IsEmpty())
-    {
-        ObjectTools::DeleteObjects(AssetsToDelete, false);
-        bDeletedAnything = true;
-    }
-
-    if (!bDeletedAnything)
-    {
-        return false;
-    }
-
+    const FBakedOutputSnapshot PreviousOutput = CaptureBakedOutputSnapshot(Component);
     Component->BakedActor = nullptr;
     Component->BakedStaticMesh = nullptr;
+    Component->BakedPrototypeMeshes.Reset();
     Component->GeneratedBakeMaterials.Reset();
     Component->SetShowingBakedOutput(false);
+    CleanupReplacedBakedOutput(Component, PreviousOutput);
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooked, TEXT("Deleted baked bridge output."));
     return true;
 }

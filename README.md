@@ -14,7 +14,7 @@ Today it can:
 - reflect and drive one selected Geometry Nodes target per actor, including enums and Blender interface panel groupings
 - import and drive a curve-owner spline target from Unreal when the target object is a Bezier curve with a GN modifier that consumes owner `Geometry`
 - preview the cooked result in Unreal with `UProceduralMeshComponent`
-- bake the cooked result to a static mesh asset and spawned baked actor in the editor
+- bake the cooked result either to one static mesh asset or to shared prototype meshes plus HISM components in the editor
 - preserve one authored UV channel on baked static meshes even when the UE 5.7 build path pads render texcoords
 - create generated placeholder materials for baked slots and allow per-slot material overrides
 
@@ -43,6 +43,7 @@ Today it can:
 - Reflected GN inputs preserve Blender interface panel hierarchy in the Unreal details panel.
 - Oversized cooks can trigger an automatic worker restart with a larger shared-memory mapping and then retry.
 - The cooked preview can be baked to a static mesh asset with stable material slots, placeholder materials, and a spawned baked actor.
+- The editor bake path can also preserve recoverable GN or spline instances as HISM output while reusing shared prototype meshes per `.blend` source.
 - The current bake path preserves a single authored UV channel on the final baked static mesh asset.
 
 ## Unreal Usage
@@ -61,7 +62,7 @@ Today it can:
 10. Edit reflected values in `Input Values`.
 11. If the target is a curve-owner spline tool, confirm the embedded `Bridge Spline Component` imports the authored Blender curve and edit spline points directly in the viewport.
 12. Click `Request Cook` and confirm the procedural preview updates in the viewport.
-13. If you want a baked asset, click `Bake To Static Mesh`.
+13. If you want a baked asset, choose `Bake Output Mode` and click `Bake Output`.
 14. Use `Select Baked Output` to focus the baked actor or asset, and `Delete Baked Output` to remove generated bake content.
 
 ## Bake Workflow Notes
@@ -69,10 +70,17 @@ Today it can:
 - Baking is editor-only.
 - If you bake before a valid cook exists, the component automatically queues a cook first and then bakes when the mesh arrives.
 - Baked assets are written under the `Bake Root Content Path` project setting, which defaults to `/Game/BlenderBridge/Baked`.
-- Each bake produces:
-  - a baked static mesh asset
+- `Bake Output Mode` defaults to `StaticMesh`.
+- `StaticMesh` mode produces:
+  - one baked static mesh asset
   - generated placeholder material instances for discovered slots when no override is provided
-  - a spawned baked static mesh actor attached to the source actor
+  - one spawned baked static mesh actor attached to the source actor
+- `InstancedHierarchy` mode produces:
+  - one baked actor with one `UHierarchicalInstancedStaticMeshComponent` per recovered prototype
+  - one shared prototype mesh asset per recovered prototype under a source-scoped `_SharedPrototypes` folder
+  - generated placeholder material instances for discovered slots when no override is provided
+- Shared prototype meshes are deduped across baked actors that point at the same `.blend` source and recover the same prototype geometry plus material signature.
+- Instanced bake succeeds only when the worker can recover at least one true instance placement from evaluated geometry. Mixed direct-mesh plus instance output is supported by emitting singleton prototype placements for the direct mesh.
 - `Material Overrides` are tracked by slot id and are applied both to the live preview and to baked output.
 - `Hide Preview After Bake` defaults to enabled so the procedural preview disappears when the baked actor is shown.
 - The bake path uses the committed `MeshDescription` editor build route and applies a post-build UV correction when UE 5.7 pads render texcoords beyond the authored UV count.

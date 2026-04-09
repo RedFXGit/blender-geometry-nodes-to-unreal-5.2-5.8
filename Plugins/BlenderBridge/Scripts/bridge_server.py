@@ -15,9 +15,10 @@ except ImportError as exc:
 
 try:
     import bpy  # type: ignore
-    from mathutils import Vector  # type: ignore
+    from mathutils import Matrix, Vector  # type: ignore
 except ImportError:
     bpy = None
+    Matrix = None
     Vector = None
 
 
@@ -246,6 +247,132 @@ assert ctypes.sizeof(BridgeMeshSlotHeader) == 112
 assert ctypes.sizeof(BridgeSharedHeader) == 296
 
 
+class BridgeInstanceBakeSlotHeader(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("sequence", ctypes.c_uint64),
+        ("slot_index", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("payload_bytes", ctypes.c_uint32),
+        ("prototype_count", ctypes.c_uint32),
+        ("placement_count", ctypes.c_uint32),
+        ("true_instance_count", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32 * 20),
+    ]
+
+
+class BridgeInstanceBakeSharedHeader(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("magic", ctypes.c_uint32),
+        ("version", ctypes.c_uint32),
+        ("header_bytes", ctypes.c_uint64),
+        ("total_bytes", ctypes.c_uint64),
+        ("slot_stride", ctypes.c_uint64),
+        ("slot_count", ctypes.c_uint32),
+        ("active_slot", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint64 * 4),
+        ("slots", BridgeInstanceBakeSlotHeader * 2),
+    ]
+
+
+class BridgeInstanceBakePayloadHeader(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("magic", ctypes.c_uint32),
+        ("version", ctypes.c_uint32),
+        ("prototype_count", ctypes.c_uint32),
+        ("material_slot_count", ctypes.c_uint32),
+        ("section_count", ctypes.c_uint32),
+        ("placement_count", ctypes.c_uint32),
+        ("prototype_records_offset", ctypes.c_uint32),
+        ("material_slot_records_offset", ctypes.c_uint32),
+        ("section_records_offset", ctypes.c_uint32),
+        ("placement_records_offset", ctypes.c_uint32),
+        ("string_table_offset", ctypes.c_uint32),
+        ("string_table_bytes", ctypes.c_uint32),
+        ("payload_bytes", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32 * 3),
+    ]
+
+
+class BridgeInstanceBakePrototypeRecord(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("prototype_key_offset", ctypes.c_uint32),
+        ("prototype_key_length", ctypes.c_uint32),
+        ("first_material_slot_index", ctypes.c_uint32),
+        ("material_slot_count", ctypes.c_uint32),
+        ("first_section_index", ctypes.c_uint32),
+        ("section_count", ctypes.c_uint32),
+        ("vertex_count", ctypes.c_uint32),
+        ("index_count", ctypes.c_uint32),
+        ("positions_offset", ctypes.c_uint32),
+        ("positions_bytes", ctypes.c_uint32),
+        ("normals_offset", ctypes.c_uint32),
+        ("normals_bytes", ctypes.c_uint32),
+        ("uv0_offset", ctypes.c_uint32),
+        ("uv0_bytes", ctypes.c_uint32),
+        ("indices_offset", ctypes.c_uint32),
+        ("indices_bytes", ctypes.c_uint32),
+        ("bounds_min", ctypes.c_float * 3),
+        ("bounds_max", ctypes.c_float * 3),
+        ("reserved", ctypes.c_uint32 * 6),
+    ]
+
+
+class BridgeInstanceBakeMaterialSlotRecord(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("slot_id_offset", ctypes.c_uint32),
+        ("slot_id_length", ctypes.c_uint32),
+        ("slot_name_offset", ctypes.c_uint32),
+        ("slot_name_length", ctypes.c_uint32),
+        ("material_name_offset", ctypes.c_uint32),
+        ("material_name_length", ctypes.c_uint32),
+        ("section_index", ctypes.c_int32),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
+class BridgeInstanceBakeSectionRecord(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("section_index", ctypes.c_int32),
+        ("first_vertex", ctypes.c_int32),
+        ("vertex_count", ctypes.c_int32),
+        ("first_index", ctypes.c_int32),
+        ("index_count", ctypes.c_int32),
+        ("slot_id_offset", ctypes.c_uint32),
+        ("slot_id_length", ctypes.c_uint32),
+        ("slot_name_offset", ctypes.c_uint32),
+        ("slot_name_length", ctypes.c_uint32),
+        ("material_name_offset", ctypes.c_uint32),
+        ("material_name_length", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+    ]
+
+
+class BridgeInstanceBakePlacementRecord(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("prototype_index", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("translation", ctypes.c_float * 3),
+        ("rotation", ctypes.c_float * 4),
+        ("scale3d", ctypes.c_float * 3),
+    ]
+
+
+assert ctypes.sizeof(BridgeInstanceBakeSlotHeader) == 112
+assert ctypes.sizeof(BridgeInstanceBakeSharedHeader) == 296
+assert ctypes.sizeof(BridgeInstanceBakePayloadHeader) == 64
+assert ctypes.sizeof(BridgeInstanceBakePrototypeRecord) == 112
+assert ctypes.sizeof(BridgeInstanceBakeMaterialSlotRecord) == 32
+assert ctypes.sizeof(BridgeInstanceBakeSectionRecord) == 48
+assert ctypes.sizeof(BridgeInstanceBakePlacementRecord) == 48
+
+
 class NamedPipeServer:
     def __init__(self, pipe_name: str) -> None:
         self.pipe_name = pipe_name
@@ -383,6 +510,7 @@ class BridgeWorker:
         self.args = args
         self.pipe = NamedPipeServer(args.pipe_name)
         self.shared_memory = mmap.mmap(-1, args.shared_memory_bytes, tagname=args.shared_memory_name)
+        self.instance_memory = mmap.mmap(-1, args.instance_memory_bytes, tagname=args.instance_memory_name)
         self.loaded_sources: dict[str, BridgeLoadedSource] = {}
         self.component_states: dict[tuple[str, str], BridgeComponentState] = {}
 
@@ -1109,6 +1237,33 @@ class BridgeWorker:
             [dict(slot) for slot in render_part[4]],
         )
 
+    def convert_matrix_to_unreal_transform(self, transform_matrix):
+        if Matrix is None:
+            raise RuntimeError("mathutils.Matrix is unavailable")
+
+        resolved_transform = transform_matrix.copy() if transform_matrix is not None else Matrix.Identity(4)
+        conversion = Matrix(
+            (
+                (100.0, 0.0, 0.0, 0.0),
+                (0.0, -100.0, 0.0, 0.0),
+                (0.0, 0.0, 100.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+        converted_transform = conversion @ resolved_transform @ conversion.inverted()
+        location, rotation, scale = converted_transform.decompose()
+        normalized_rotation = rotation.normalized()
+        return {
+            "translation": [float(location.x), float(location.y), float(location.z)],
+            "rotation": [
+                float(normalized_rotation.x),
+                float(normalized_rotation.y),
+                float(normalized_rotation.z),
+                float(normalized_rotation.w),
+            ],
+            "scale3d": [float(scale.x), float(scale.y), float(scale.z)],
+        }
+
     def merge_render_parts(self, render_parts):
         ordered_slot_keys: list[tuple[str, str, str]] = []
         slot_metadata_by_key: dict[tuple[str, str, str], dict[str, object]] = {}
@@ -1213,6 +1368,338 @@ class BridgeWorker:
             material_slot_descriptors,
             section_descriptors,
         )
+
+    def compute_instance_prototype_key(self, merged_buffers) -> str:
+        prototype_hash = hashlib.md5()
+        for array in merged_buffers[:4]:
+            prototype_hash.update(np.ascontiguousarray(array).view(np.uint8).tobytes())
+        prototype_hash.update(
+            json.dumps(merged_buffers[4], sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        )
+        prototype_hash.update(
+            json.dumps(merged_buffers[5], sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        )
+        return prototype_hash.hexdigest()
+
+    def register_instance_prototype(self, render_part, prototype_lookup: dict[str, int], prototypes: list[dict[str, object]]) -> int | None:
+        unreal_local_render_part = self.transform_render_part(render_part, None, convert_to_unreal=True)
+        merged_buffers = self.merge_render_parts([unreal_local_render_part])
+        if merged_buffers is None or merged_buffers[0].size == 0:
+            return None
+
+        prototype_key = self.compute_instance_prototype_key(merged_buffers)
+        existing_index = prototype_lookup.get(prototype_key)
+        if existing_index is not None:
+            return existing_index
+
+        positions = np.ascontiguousarray(merged_buffers[0], dtype=np.float32)
+        normals = np.ascontiguousarray(merged_buffers[1], dtype=np.float32)
+        uv0 = np.ascontiguousarray(merged_buffers[2], dtype=np.float32)
+        indices = np.ascontiguousarray(merged_buffers[3], dtype=np.uint32)
+        bounds_min = positions.min(axis=0)
+        bounds_max = positions.max(axis=0)
+
+        prototype_lookup[prototype_key] = len(prototypes)
+        prototypes.append(
+            {
+                "prototype_key": prototype_key,
+                "positions": positions,
+                "normals": normals,
+                "uv0": uv0,
+                "indices": indices,
+                "material_slots": [dict(slot) for slot in merged_buffers[4]],
+                "sections": [dict(section) for section in merged_buffers[5]],
+                "bounds_min": [float(bounds_min[0]), float(bounds_min[1]), float(bounds_min[2])],
+                "bounds_max": [float(bounds_max[0]), float(bounds_max[1]), float(bounds_max[2])],
+            }
+        )
+        return prototype_lookup[prototype_key]
+
+    def collect_instance_bake_entries_from_geometry(
+        self,
+        geometry,
+        depsgraph,
+        reference_cache: dict,
+        prototype_lookup: dict[str, int],
+        prototypes: list[dict[str, object]],
+        placements: list[dict[str, object]],
+        current_transform,
+        recursion_depth: int,
+    ) -> int:
+        if recursion_depth > MAX_GEOMETRYSET_RECURSION_DEPTH:
+            raise RuntimeError("Geometry Nodes instance recursion exceeded the supported depth")
+
+        true_instance_count = 0
+        mesh = getattr(geometry, "mesh", None)
+        if mesh is not None:
+            render_part = self.extract_local_render_buffers_for_mesh(mesh)
+            if render_part is not None:
+                prototype_index = self.register_instance_prototype(render_part, prototype_lookup, prototypes)
+                if prototype_index is not None:
+                    placements.append(
+                        {
+                            "prototype_index": prototype_index,
+                            "transform": self.convert_matrix_to_unreal_transform(current_transform),
+                        }
+                    )
+
+        instances_pointcloud = None
+        try:
+            instances_pointcloud = geometry.instances_pointcloud()
+        except AttributeError:
+            instances_pointcloud = None
+
+        if instances_pointcloud is None:
+            return true_instance_count
+
+        try:
+            transform_data = instances_pointcloud.attributes["instance_transform"].data
+            reference_index_data = instances_pointcloud.attributes[".reference_index"].data
+        except (AttributeError, KeyError, TypeError):
+            return true_instance_count
+
+        references = geometry.instance_references()
+        if not references:
+            return true_instance_count
+
+        for point_index in range(len(instances_pointcloud.points)):
+            reference_index = int(reference_index_data[point_index].value)
+            if reference_index < 0 or reference_index >= len(references):
+                continue
+
+            true_instance_count += 1
+            instance_transform = transform_data[point_index].value.copy()
+            combined_transform = current_transform @ instance_transform if current_transform is not None else instance_transform.copy()
+            reference_parts = self.build_local_render_parts_from_reference(
+                references[reference_index],
+                depsgraph,
+                reference_cache,
+                recursion_depth + 1,
+            )
+            for reference_part in reference_parts:
+                prototype_index = self.register_instance_prototype(reference_part, prototype_lookup, prototypes)
+                if prototype_index is None:
+                    continue
+
+                placements.append(
+                    {
+                        "prototype_index": prototype_index,
+                        "transform": self.convert_matrix_to_unreal_transform(combined_transform),
+                    }
+                )
+
+        return true_instance_count
+
+    def build_instance_bake_payload_for_target(self, target_object, depsgraph):
+        evaluated_object = target_object.evaluated_get(depsgraph)
+        geometry_getter = getattr(evaluated_object, "evaluated_geometry", None)
+        if not callable(geometry_getter):
+            return None, None
+
+        geometry = geometry_getter()
+        prototype_lookup: dict[str, int] = {}
+        prototypes: list[dict[str, object]] = []
+        placements: list[dict[str, object]] = []
+        true_instance_count = self.collect_instance_bake_entries_from_geometry(
+            geometry,
+            depsgraph,
+            {},
+            prototype_lookup,
+            prototypes,
+            placements,
+            target_object.matrix_world.copy(),
+            0,
+        )
+        if true_instance_count <= 0 or not prototypes or not placements:
+            return None, None
+
+        return (
+            {
+                "prototypes": prototypes,
+                "placements": placements,
+                "true_instance_count": true_instance_count,
+            },
+            f"{target_object.name} ({true_instance_count} GN instances)",
+        )
+
+    def serialize_instance_bake_payload(self, payload: dict[str, object]) -> bytes:
+        prototypes = list(payload.get("prototypes", []) or [])
+        placements = list(payload.get("placements", []) or [])
+
+        string_table = bytearray()
+        string_lookup: dict[bytes, tuple[int, int]] = {}
+
+        def intern_string(value: object) -> tuple[int, int]:
+            encoded = str(value or "").encode("utf-8")
+            if encoded in string_lookup:
+                return string_lookup[encoded]
+            offset = len(string_table)
+            string_table.extend(encoded)
+            entry = (offset, len(encoded))
+            string_lookup[encoded] = entry
+            return entry
+
+        prototype_records: list[BridgeInstanceBakePrototypeRecord] = []
+        material_slot_records: list[BridgeInstanceBakeMaterialSlotRecord] = []
+        section_records: list[BridgeInstanceBakeSectionRecord] = []
+        placement_records: list[BridgeInstanceBakePlacementRecord] = []
+        prototype_buffers: list[tuple[BridgeInstanceBakePrototypeRecord, bytes, bytes, bytes, bytes]] = []
+
+        for prototype in prototypes:
+            positions = np.ascontiguousarray(prototype["positions"], dtype=np.float32)
+            normals = np.ascontiguousarray(prototype["normals"], dtype=np.float32)
+            uv0 = np.ascontiguousarray(prototype["uv0"], dtype=np.float32)
+            indices = np.ascontiguousarray(prototype["indices"], dtype=np.uint32)
+            material_slots = list(prototype.get("material_slots", []) or [])
+            sections = list(prototype.get("sections", []) or [])
+
+            prototype_record = BridgeInstanceBakePrototypeRecord()
+            prototype_record.prototype_key_offset, prototype_record.prototype_key_length = intern_string(
+                prototype.get("prototype_key", "")
+            )
+            prototype_record.first_material_slot_index = len(material_slot_records)
+            prototype_record.material_slot_count = len(material_slots)
+            prototype_record.first_section_index = len(section_records)
+            prototype_record.section_count = len(sections)
+            prototype_record.vertex_count = int(positions.shape[0])
+            prototype_record.index_count = int(indices.shape[0])
+
+            bounds_min = to_float_list(prototype.get("bounds_min", (0.0, 0.0, 0.0)), 3, 0.0)
+            bounds_max = to_float_list(prototype.get("bounds_max", (0.0, 0.0, 0.0)), 3, 0.0)
+            prototype_record.bounds_min[:] = bounds_min
+            prototype_record.bounds_max[:] = bounds_max
+
+            for slot in material_slots:
+                slot_record = BridgeInstanceBakeMaterialSlotRecord()
+                slot_record.slot_id_offset, slot_record.slot_id_length = intern_string(slot.get("slot_id", ""))
+                slot_record.slot_name_offset, slot_record.slot_name_length = intern_string(slot.get("slot_name", ""))
+                slot_record.material_name_offset, slot_record.material_name_length = intern_string(
+                    slot.get("material_name", "")
+                )
+                slot_record.section_index = int(slot.get("section_index", -1))
+                material_slot_records.append(slot_record)
+
+            for section in sections:
+                section_record = BridgeInstanceBakeSectionRecord()
+                section_record.section_index = int(section.get("section_index", 0))
+                section_record.first_vertex = int(section.get("first_vertex", 0))
+                section_record.vertex_count = int(section.get("vertex_count", 0))
+                section_record.first_index = int(section.get("first_index", 0))
+                section_record.index_count = int(section.get("index_count", 0))
+                section_record.slot_id_offset, section_record.slot_id_length = intern_string(section.get("slot_id", ""))
+                section_record.slot_name_offset, section_record.slot_name_length = intern_string(section.get("slot_name", ""))
+                section_record.material_name_offset, section_record.material_name_length = intern_string(
+                    section.get("material_name", "")
+                )
+                section_records.append(section_record)
+
+            prototype_records.append(prototype_record)
+            prototype_buffers.append(
+                (
+                    prototype_record,
+                    positions.tobytes(order="C"),
+                    normals.tobytes(order="C"),
+                    uv0.tobytes(order="C"),
+                    indices.tobytes(order="C"),
+                )
+            )
+
+        for placement in placements:
+            transform = placement.get("transform", {})
+            placement_record = BridgeInstanceBakePlacementRecord()
+            placement_record.prototype_index = int(placement.get("prototype_index", 0))
+            placement_record.translation[:] = to_float_list(transform.get("translation", (0.0, 0.0, 0.0)), 3, 0.0)
+            placement_record.rotation[:] = to_float_list(transform.get("rotation", (0.0, 0.0, 0.0, 1.0)), 4, 0.0)
+            placement_record.scale3d[:] = to_float_list(transform.get("scale3d", (1.0, 1.0, 1.0)), 3, 1.0)
+            placement_records.append(placement_record)
+
+        header_size = ctypes.sizeof(BridgeInstanceBakePayloadHeader)
+        prototype_records_offset = header_size
+        material_slot_records_offset = prototype_records_offset + len(prototype_records) * ctypes.sizeof(
+            BridgeInstanceBakePrototypeRecord
+        )
+        section_records_offset = material_slot_records_offset + len(material_slot_records) * ctypes.sizeof(
+            BridgeInstanceBakeMaterialSlotRecord
+        )
+        placement_records_offset = section_records_offset + len(section_records) * ctypes.sizeof(
+            BridgeInstanceBakeSectionRecord
+        )
+        string_table_offset = placement_records_offset + len(placement_records) * ctypes.sizeof(
+            BridgeInstanceBakePlacementRecord
+        )
+        data_offset = string_table_offset + len(string_table)
+
+        for prototype_record, positions_bytes, normals_bytes, uv0_bytes, indices_bytes in prototype_buffers:
+            prototype_record.positions_offset = data_offset
+            prototype_record.positions_bytes = len(positions_bytes)
+            data_offset += len(positions_bytes)
+
+            prototype_record.normals_offset = data_offset
+            prototype_record.normals_bytes = len(normals_bytes)
+            data_offset += len(normals_bytes)
+
+            prototype_record.uv0_offset = data_offset
+            prototype_record.uv0_bytes = len(uv0_bytes)
+            data_offset += len(uv0_bytes)
+
+            prototype_record.indices_offset = data_offset
+            prototype_record.indices_bytes = len(indices_bytes)
+            data_offset += len(indices_bytes)
+
+        header = BridgeInstanceBakePayloadHeader()
+        header.magic = 0x42424950
+        header.version = 1
+        header.prototype_count = len(prototype_records)
+        header.material_slot_count = len(material_slot_records)
+        header.section_count = len(section_records)
+        header.placement_count = len(placement_records)
+        header.prototype_records_offset = prototype_records_offset
+        header.material_slot_records_offset = material_slot_records_offset
+        header.section_records_offset = section_records_offset
+        header.placement_records_offset = placement_records_offset
+        header.string_table_offset = string_table_offset
+        header.string_table_bytes = len(string_table)
+        header.payload_bytes = data_offset
+
+        payload_bytes = bytearray(data_offset)
+        payload_bytes[0:header_size] = bytes(header)
+
+        if prototype_records:
+            start = prototype_records_offset
+            payload_bytes[start : start + len(prototype_records) * ctypes.sizeof(BridgeInstanceBakePrototypeRecord)] = b"".join(
+                bytes(record) for record in prototype_records
+            )
+        if material_slot_records:
+            start = material_slot_records_offset
+            payload_bytes[
+                start : start + len(material_slot_records) * ctypes.sizeof(BridgeInstanceBakeMaterialSlotRecord)
+            ] = b"".join(bytes(record) for record in material_slot_records)
+        if section_records:
+            start = section_records_offset
+            payload_bytes[start : start + len(section_records) * ctypes.sizeof(BridgeInstanceBakeSectionRecord)] = b"".join(
+                bytes(record) for record in section_records
+            )
+        if placement_records:
+            start = placement_records_offset
+            payload_bytes[
+                start : start + len(placement_records) * ctypes.sizeof(BridgeInstanceBakePlacementRecord)
+            ] = b"".join(bytes(record) for record in placement_records)
+        if string_table:
+            payload_bytes[string_table_offset : string_table_offset + len(string_table)] = string_table
+
+        for prototype_record, positions_bytes, normals_bytes, uv0_bytes, indices_bytes in prototype_buffers:
+            payload_bytes[
+                prototype_record.positions_offset : prototype_record.positions_offset + prototype_record.positions_bytes
+            ] = positions_bytes
+            payload_bytes[
+                prototype_record.normals_offset : prototype_record.normals_offset + prototype_record.normals_bytes
+            ] = normals_bytes
+            payload_bytes[prototype_record.uv0_offset : prototype_record.uv0_offset + prototype_record.uv0_bytes] = uv0_bytes
+            payload_bytes[
+                prototype_record.indices_offset : prototype_record.indices_offset + prototype_record.indices_bytes
+            ] = indices_bytes
+
+        return bytes(payload_bytes)
 
     def build_local_render_parts_from_reference(self, reference, depsgraph, reference_cache: dict, recursion_depth: int):
         cache_key = self.get_cache_key(reference)
@@ -1432,6 +1919,47 @@ class BridgeWorker:
         header.active_slot = slot_index
         return int(slot_index)
 
+    def write_instance_bake_to_shared_memory(
+        self,
+        payload_bytes: bytes,
+        prototype_count: int,
+        placement_count: int,
+        true_instance_count: int,
+        request_id: str = "",
+        source_handle: str = "",
+        target_id: str = "",
+    ) -> int | None:
+        payload_size = len(payload_bytes)
+        header = BridgeInstanceBakeSharedHeader.from_buffer(self.instance_memory)
+        slot_index = 1 if header.active_slot == 0 else 0
+        slot = header.slots[slot_index]
+
+        if payload_size > header.slot_stride:
+            self.send_for_request(
+                "ResizeRequired",
+                request_id=request_id,
+                source_handle=source_handle,
+                target_id=target_id,
+                required_bytes=int(payload_size),
+            )
+            return None
+
+        slot.status = 0
+        slot_buffer = memoryview(self.instance_memory)[
+            header.header_bytes + slot_index * header.slot_stride : header.header_bytes + (slot_index + 1) * header.slot_stride
+        ]
+        slot_buffer[:payload_size] = payload_bytes
+
+        slot.sequence += 1
+        slot.slot_index = slot_index
+        slot.payload_bytes = payload_size
+        slot.prototype_count = prototype_count
+        slot.placement_count = placement_count
+        slot.true_instance_count = true_instance_count
+        slot.status = 1
+        header.active_slot = slot_index
+        return int(slot_index)
+
     def cook_target(self, payload: dict) -> None:
         if bpy is None:
             raise RuntimeError("Real mesh cooking requires Blender's bpy module")
@@ -1509,6 +2037,69 @@ class BridgeWorker:
             sections=section_descriptors,
         )
 
+    def request_instance_bake(self, payload: dict) -> None:
+        if bpy is None:
+            raise RuntimeError("Instance bake requests require Blender's bpy module")
+
+        request_id = str(payload.get("request_id") or "")
+        source_handle = str(payload.get("source_handle") or "").strip()
+        target_id = str(payload.get("target_id") or "").strip()
+        component_handle = str(payload.get("component_handle") or "").strip()
+        values = payload.get("values", {})
+        if not isinstance(values, dict):
+            values = {}
+        curve_payload = payload.get("owner_curve", {})
+        if not isinstance(curve_payload, dict):
+            curve_payload = {}
+
+        source_state, target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+        capabilities = self.build_target_capabilities(target_object, modifier)
+        if bool(capabilities.get("supports_curve_owner", False)):
+            working_object, working_modifier = self.resolve_component_target(
+                source_state,
+                target_descriptor,
+                target_object,
+                component_handle,
+            )
+            self.apply_curve_owner_payload(working_object, curve_payload)
+            self.apply_geometry_nodes_inputs(working_object, working_modifier, values)
+            target_object = working_object
+            modifier = working_modifier
+        else:
+            self.apply_geometry_nodes_inputs(target_object, modifier, values)
+
+        bpy.context.view_layer.update()
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        instance_bake_payload, baked_target_label = self.build_instance_bake_payload_for_target(target_object, depsgraph)
+        if instance_bake_payload is None:
+            raise RuntimeError(f"Target '{target_id}' did not produce recoverable instances for instanced bake")
+
+        serialized_payload = self.serialize_instance_bake_payload(instance_bake_payload)
+        slot_index = self.write_instance_bake_to_shared_memory(
+            serialized_payload,
+            prototype_count=len(instance_bake_payload["prototypes"]),
+            placement_count=len(instance_bake_payload["placements"]),
+            true_instance_count=int(instance_bake_payload["true_instance_count"]),
+            request_id=request_id,
+            source_handle=source_handle,
+            target_id=target_id,
+        )
+        if slot_index is None:
+            return
+
+        self.send_for_request(
+            "InstanceBakeComplete",
+            request_id=request_id,
+            source_handle=source_handle,
+            target_id=target_id,
+            slot=slot_index,
+            sequence=int(BridgeInstanceBakeSharedHeader.from_buffer(self.instance_memory).slots[slot_index].sequence),
+            prototype_count=len(instance_bake_payload["prototypes"]),
+            instance_count=len(instance_bake_payload["placements"]),
+            true_instance_count=int(instance_bake_payload["true_instance_count"]),
+            object_name=str(baked_target_label or target_descriptor["object_name"]),
+        )
+
     def handle_message(self, message: dict) -> bool:
         message_type = str(message.get("message_type", ""))
         if message_type == "Hello":
@@ -1521,6 +2112,9 @@ class BridgeWorker:
             return True
         if message_type == "CookTarget":
             self.cook_target(message)
+            return True
+        if message_type == "RequestInstanceBake":
+            self.request_instance_bake(message)
             return True
         if message_type == "ReleaseComponentState":
             self.release_component_state(
@@ -1562,6 +2156,7 @@ class BridgeWorker:
                 self.unload_source(source_handle)
             self.pipe.close()
             self.shared_memory.close()
+            self.instance_memory.close()
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1569,6 +2164,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--pipe-name", required=True)
     parser.add_argument("--shared-memory-name", required=True)
     parser.add_argument("--shared-memory-bytes", required=True, type=int)
+    parser.add_argument("--instance-memory-name", required=True)
+    parser.add_argument("--instance-memory-bytes", required=True, type=int)
     parser.add_argument("--blend-file", default="")
     return parser.parse_args(argv)
 

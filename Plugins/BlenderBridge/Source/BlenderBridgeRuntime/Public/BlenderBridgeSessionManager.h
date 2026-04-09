@@ -22,19 +22,22 @@ public:
     void NotifyTargetChanged(UBlenderBridgeComponent* Component);
     void RefreshComponentSchema(UBlenderBridgeComponent* Component, bool bForceReload);
     void RequestCook(UBlenderBridgeComponent* Component);
+    void RequestInstanceBake(UBlenderBridgeComponent* Component);
     void ReleaseComponentState(UBlenderBridgeComponent* Component);
     void WarmSourceOnPreviewDrag(UBlenderBridgeSource* Source, UBlenderBridgeComponent* PreviewComponent);
 
     bool IsSessionConnected() const;
     EBlenderBridgeConnectionState GetConnectionState() const { return SessionState; }
     const FString& GetLastSessionMessage() const { return LastSessionMessage; }
+    const FBridgeDecodedInstanceBake* FindCachedInstanceBake(const UBlenderBridgeComponent* Component) const;
 
 private:
     enum class EBridgeManagerRequestKind : uint8
     {
         EnsureSourceLoaded,
         DescribeTarget,
-        CookTarget
+        CookTarget,
+        RequestInstanceBake
     };
 
     struct FSourceCache
@@ -53,6 +56,7 @@ private:
     struct FCookedTargetCache
     {
         FBridgeDecodedMesh DecodedMesh;
+        FBridgeDecodedInstanceBake DecodedInstanceBake;
     };
 
     struct FPendingRequest
@@ -64,6 +68,7 @@ private:
         FString CookCacheKey;
         bool bForceReload = false;
         bool bRequestCookAfterDescribe = false;
+        bool bRequestInstanceBakeAfterDescribe = false;
         bool bPreserveInputValues = false;
     };
 
@@ -74,21 +79,40 @@ private:
 
     void RefreshAllComponentConnectionStates() const;
     TMap<FString, FString> GatherSourcesToRestore() const;
-    void ApplySourceCacheToComponents(const FString& SourceHandle, bool bRequestCookForPendingComponent, UBlenderBridgeComponent* PendingComponent);
+    void ApplySourceCacheToComponents(
+        const FString& SourceHandle,
+        bool bRequestCookForPendingComponent,
+        bool bRequestInstanceBakeForPendingComponent,
+        UBlenderBridgeComponent* PendingComponent);
     void ClearCachedTargetData(const FString& SourceHandle);
     bool QueueEnsureSourceLoadedRequest(
         const FString& SourceHandle,
         const FString& BlendFilePath,
         UBlenderBridgeComponent* Component,
         bool bForceReload,
-        bool bRequestCookAfterDescribe);
+        bool bRequestCookAfterDescribe,
+        bool bRequestInstanceBakeAfterDescribe);
 
-    bool RequestEnsureSourceLoaded(UBlenderBridgeComponent* Component, bool bForceReload, bool bRequestCookAfterDescribe);
-    bool RequestDescribeTarget(UBlenderBridgeComponent* Component, bool bPreserveInputValues, bool bRequestCookAfterDescribe);
+    bool RequestEnsureSourceLoaded(
+        UBlenderBridgeComponent* Component,
+        bool bForceReload,
+        bool bRequestCookAfterDescribe,
+        bool bRequestInstanceBakeAfterDescribe);
+    bool RequestDescribeTarget(
+        UBlenderBridgeComponent* Component,
+        bool bPreserveInputValues,
+        bool bRequestCookAfterDescribe,
+        bool bRequestInstanceBakeAfterDescribe);
     bool SendCookRequest(UBlenderBridgeComponent* Component);
-    bool TryApplyCachedTargetDescription(UBlenderBridgeComponent* Component, bool bPreserveInputValues, bool bRequestCookAfterDescribe);
+    bool SendInstanceBakeRequest(UBlenderBridgeComponent* Component);
+    bool TryApplyCachedTargetDescription(
+        UBlenderBridgeComponent* Component,
+        bool bPreserveInputValues,
+        bool bRequestCookAfterDescribe,
+        bool bRequestInstanceBakeAfterDescribe);
     bool TryApplyCachedCook(UBlenderBridgeComponent* Component);
-    void RestartSessionForResize(UBlenderBridgeComponent* RetryComponent, uint64 RequiredSlotBytes);
+    bool TryApplyCachedInstanceBake(UBlenderBridgeComponent* Component);
+    void RestartSessionForResize(UBlenderBridgeComponent* RetryComponent, EBridgeManagerRequestKind RetryKind, uint64 RequiredSlotBytes);
 
     FString MakeRequestId();
     FString ResolveWorkerScriptPath() const;
@@ -100,6 +124,7 @@ private:
     TMap<FString, FCookedTargetCache> CookedTargetCaches;
     TMap<FString, FPendingRequest> PendingRequests;
     TArray<TWeakObjectPtr<UBlenderBridgeComponent>> PendingCookRetryComponents;
+    TArray<TWeakObjectPtr<UBlenderBridgeComponent>> PendingInstanceBakeRetryComponents;
     TMap<FString, TWeakObjectPtr<UBlenderBridgeComponent>> PendingWarmupPreviewComponents;
     EBlenderBridgeConnectionState SessionState = EBlenderBridgeConnectionState::Disconnected;
     FString LastSessionMessage;

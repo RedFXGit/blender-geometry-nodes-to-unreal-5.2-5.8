@@ -44,7 +44,7 @@ public:
         Category = "Bake",
         meta = (
             DisplayName = "Bake Root Content Path",
-            ToolTip = "Content root where baked Blender Bridge static meshes and generated materials will be written."
+            ToolTip = "Content root where baked Blender Bridge outputs, shared prototype meshes, and generated materials will be written."
         ))
     FString BakeRootContentPath = TEXT("/Game/BlenderBridge/Baked");
 };

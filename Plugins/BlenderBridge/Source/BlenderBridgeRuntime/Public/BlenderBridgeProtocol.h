@@ -67,6 +67,13 @@ enum class EBlenderBridgeInputType : uint8
     Unsupported
 };
 
+UENUM(BlueprintType)
+enum class EBlenderBridgeBakeOutputMode : uint8
+{
+    StaticMesh,
+    InstancedHierarchy
+};
+
 USTRUCT(BlueprintType)
 struct FBridgeEnumOption
 {
@@ -278,6 +285,38 @@ struct FBridgeDecodedMesh
     }
 };
 
+struct FBridgeInstanceBakePrototype
+{
+    FString PrototypeKey;
+    FBridgeDecodedMesh Mesh;
+
+    void Reset()
+    {
+        PrototypeKey.Reset();
+        Mesh.Reset();
+    }
+};
+
+struct FBridgeInstanceBakePlacement
+{
+    int32 PrototypeIndex = INDEX_NONE;
+    FTransform Transform = FTransform::Identity;
+};
+
+struct FBridgeDecodedInstanceBake
+{
+    TArray<FBridgeInstanceBakePrototype> Prototypes;
+    TArray<FBridgeInstanceBakePlacement> Placements;
+    int32 TrueInstanceCount = 0;
+
+    void Reset()
+    {
+        Prototypes.Reset();
+        Placements.Reset();
+        TrueInstanceCount = 0;
+    }
+};
+
 enum class EBlenderBridgeMessageType : uint8
 {
     Unknown,
@@ -287,8 +326,10 @@ enum class EBlenderBridgeMessageType : uint8
     DescribeTarget,
     TargetDescription,
     CookTarget,
+    RequestInstanceBake,
     ReleaseComponentState,
     CookComplete,
+    InstanceBakeComplete,
     ResizeRequired,
     Error,
     Shutdown
@@ -298,6 +339,10 @@ namespace BlenderBridge
 {
     inline constexpr uint32 SharedMemoryMagic = 0x42424745u;
     inline constexpr uint32 SharedMemoryVersion = 1u;
+    inline constexpr uint32 InstanceBakeSharedMemoryMagic = 0x42424942u;
+    inline constexpr uint32 InstanceBakeSharedMemoryVersion = 1u;
+    inline constexpr uint32 InstanceBakePayloadMagic = 0x42424950u;
+    inline constexpr uint32 InstanceBakePayloadVersion = 1u;
     inline constexpr uint32 SharedSlotCount = 2u;
     inline constexpr uint32 SlotStatusEmpty = 0u;
     inline constexpr uint32 SlotStatusReady = 1u;
@@ -348,3 +393,114 @@ struct FBridgeSharedHeader
 
 static_assert(sizeof(FBridgeMeshSlotHeader) == 112, "Unexpected bridge mesh slot header size");
 static_assert(sizeof(FBridgeSharedHeader) == 296, "Unexpected bridge shared header size");
+
+struct FBridgeInstanceBakeSlotHeader
+{
+    uint64 Sequence = 0;
+    uint32 SlotIndex = 0;
+    uint32 Status = BlenderBridge::SlotStatusEmpty;
+    uint32 PayloadBytes = 0;
+    uint32 PrototypeCount = 0;
+    uint32 PlacementCount = 0;
+    uint32 TrueInstanceCount = 0;
+    uint32 Reserved[20] = {};
+};
+
+struct FBridgeInstanceBakeSharedHeader
+{
+    uint32 Magic = BlenderBridge::InstanceBakeSharedMemoryMagic;
+    uint32 Version = BlenderBridge::InstanceBakeSharedMemoryVersion;
+    uint64 HeaderBytes = sizeof(FBridgeInstanceBakeSharedHeader);
+    uint64 TotalBytes = 0;
+    uint64 SlotStride = 0;
+    uint32 SlotCount = BlenderBridge::SharedSlotCount;
+    uint32 ActiveSlot = 0;
+    uint64 Reserved[4] = {};
+    FBridgeInstanceBakeSlotHeader Slots[BlenderBridge::SharedSlotCount];
+};
+
+struct FBridgeInstanceBakePayloadHeader
+{
+    uint32 Magic = BlenderBridge::InstanceBakePayloadMagic;
+    uint32 Version = BlenderBridge::InstanceBakePayloadVersion;
+    uint32 PrototypeCount = 0;
+    uint32 MaterialSlotCount = 0;
+    uint32 SectionCount = 0;
+    uint32 PlacementCount = 0;
+    uint32 PrototypeRecordsOffset = 0;
+    uint32 MaterialSlotRecordsOffset = 0;
+    uint32 SectionRecordsOffset = 0;
+    uint32 PlacementRecordsOffset = 0;
+    uint32 StringTableOffset = 0;
+    uint32 StringTableBytes = 0;
+    uint32 PayloadBytes = 0;
+    uint32 Reserved[3] = {};
+};
+
+struct FBridgeInstanceBakePrototypeRecord
+{
+    uint32 PrototypeKeyOffset = 0;
+    uint32 PrototypeKeyLength = 0;
+    uint32 FirstMaterialSlotIndex = 0;
+    uint32 MaterialSlotCount = 0;
+    uint32 FirstSectionIndex = 0;
+    uint32 SectionCount = 0;
+    uint32 VertexCount = 0;
+    uint32 IndexCount = 0;
+    uint32 PositionsOffset = 0;
+    uint32 PositionsBytes = 0;
+    uint32 NormalsOffset = 0;
+    uint32 NormalsBytes = 0;
+    uint32 UV0Offset = 0;
+    uint32 UV0Bytes = 0;
+    uint32 IndicesOffset = 0;
+    uint32 IndicesBytes = 0;
+    float BoundsMin[3] = {0.0f, 0.0f, 0.0f};
+    float BoundsMax[3] = {0.0f, 0.0f, 0.0f};
+    uint32 Reserved[6] = {};
+};
+
+struct FBridgeInstanceBakeMaterialSlotRecord
+{
+    uint32 SlotIdOffset = 0;
+    uint32 SlotIdLength = 0;
+    uint32 SlotNameOffset = 0;
+    uint32 SlotNameLength = 0;
+    uint32 MaterialNameOffset = 0;
+    uint32 MaterialNameLength = 0;
+    int32 SectionIndex = INDEX_NONE;
+    uint32 Reserved = 0;
+};
+
+struct FBridgeInstanceBakeSectionRecord
+{
+    int32 SectionIndex = 0;
+    int32 FirstVertex = 0;
+    int32 VertexCount = 0;
+    int32 FirstIndex = 0;
+    int32 IndexCount = 0;
+    uint32 SlotIdOffset = 0;
+    uint32 SlotIdLength = 0;
+    uint32 SlotNameOffset = 0;
+    uint32 SlotNameLength = 0;
+    uint32 MaterialNameOffset = 0;
+    uint32 MaterialNameLength = 0;
+    uint32 Reserved = 0;
+};
+
+struct FBridgeInstanceBakePlacementRecord
+{
+    uint32 PrototypeIndex = 0;
+    uint32 Reserved = 0;
+    float Translation[3] = {0.0f, 0.0f, 0.0f};
+    float Rotation[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    float Scale3D[3] = {1.0f, 1.0f, 1.0f};
+};
+
+static_assert(sizeof(FBridgeInstanceBakeSlotHeader) == 112, "Unexpected instance-bake slot header size");
+static_assert(sizeof(FBridgeInstanceBakeSharedHeader) == 296, "Unexpected instance-bake shared header size");
+static_assert(sizeof(FBridgeInstanceBakePayloadHeader) == 64, "Unexpected instance-bake payload header size");
+static_assert(sizeof(FBridgeInstanceBakePrototypeRecord) == 112, "Unexpected instance-bake prototype record size");
+static_assert(sizeof(FBridgeInstanceBakeMaterialSlotRecord) == 32, "Unexpected instance-bake material-slot record size");
+static_assert(sizeof(FBridgeInstanceBakeSectionRecord) == 48, "Unexpected instance-bake section record size");
+static_assert(sizeof(FBridgeInstanceBakePlacementRecord) == 48, "Unexpected instance-bake placement record size");

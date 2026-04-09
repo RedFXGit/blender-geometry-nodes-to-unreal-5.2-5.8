@@ -16,10 +16,14 @@ const TCHAR* BlenderBridge::LexToString(const EBlenderBridgeMessageType Type)
         return TEXT("TargetDescription");
     case EBlenderBridgeMessageType::CookTarget:
         return TEXT("CookTarget");
+    case EBlenderBridgeMessageType::RequestInstanceBake:
+        return TEXT("RequestInstanceBake");
     case EBlenderBridgeMessageType::ReleaseComponentState:
         return TEXT("ReleaseComponentState");
     case EBlenderBridgeMessageType::CookComplete:
         return TEXT("CookComplete");
+    case EBlenderBridgeMessageType::InstanceBakeComplete:
+        return TEXT("InstanceBakeComplete");
     case EBlenderBridgeMessageType::ResizeRequired:
         return TEXT("ResizeRequired");
     case EBlenderBridgeMessageType::Error:
@@ -40,8 +44,10 @@ bool BlenderBridge::TryParseMessageType(const FString& Text, EBlenderBridgeMessa
         {TEXT("DescribeTarget"), EBlenderBridgeMessageType::DescribeTarget},
         {TEXT("TargetDescription"), EBlenderBridgeMessageType::TargetDescription},
         {TEXT("CookTarget"), EBlenderBridgeMessageType::CookTarget},
+        {TEXT("RequestInstanceBake"), EBlenderBridgeMessageType::RequestInstanceBake},
         {TEXT("ReleaseComponentState"), EBlenderBridgeMessageType::ReleaseComponentState},
         {TEXT("CookComplete"), EBlenderBridgeMessageType::CookComplete},
+        {TEXT("InstanceBakeComplete"), EBlenderBridgeMessageType::InstanceBakeComplete},
         {TEXT("ResizeRequired"), EBlenderBridgeMessageType::ResizeRequired},
         {TEXT("Error"), EBlenderBridgeMessageType::Error},
         {TEXT("Shutdown"), EBlenderBridgeMessageType::Shutdown}

@@ -1,10 +1,12 @@
 #include "BlenderBridgeComponent.h"
 
+#include "BlenderBridgeActor.h"
 #include "BlenderBridgeRuntimeModule.h"
 #include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSource.h"
 #include "BlenderBridgeMessages.h"
 #include "Components/SplineComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/UserDefinedEnum.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
@@ -247,6 +249,14 @@ void UBlenderBridgeComponent::BakeToStaticMesh()
         return;
     }
 
+    if (BakeOutputMode == EBlenderBridgeBakeOutputMode::InstancedHierarchy)
+    {
+        bPendingInstancedBake = true;
+        SetShowingBakedOutput(false);
+        FBlenderBridgeRuntimeModule::Get().GetSessionManager().RequestInstanceBake(this);
+        return;
+    }
+
     if (!HasCookedMesh())
     {
         bPendingBakeAfterCook = true;
@@ -420,12 +430,100 @@ void UBlenderBridgeComponent::UnbindSplineComponentDelegates()
 
 USplineComponent* UBlenderBridgeComponent::GetBridgeSplineComponent() const
 {
+    if (const ABlenderBridgeActor* BridgeActor = Cast<ABlenderBridgeActor>(GetOwner()))
+    {
+        if (USplineComponent* BridgeSplineComponent = BridgeActor->GetBridgeSplineComponent())
+        {
+            return BridgeSplineComponent;
+        }
+    }
+
     if (AActor* Owner = GetOwner())
     {
+        TInlineComponentArray<USplineComponent*> SplineComponents(Owner);
+        for (USplineComponent* SplineComponent : SplineComponents)
+        {
+            if (SplineComponent != nullptr && SplineComponent->GetFName() == TEXT("BridgeSplineComponent"))
+            {
+                return SplineComponent;
+            }
+        }
+
         return Owner->FindComponentByClass<USplineComponent>();
     }
 
     return nullptr;
+}
+
+USplineComponent* UBlenderBridgeComponent::EnsureBridgeSplineComponent()
+{
+    if (ABlenderBridgeActor* BridgeActor = Cast<ABlenderBridgeActor>(GetOwner()))
+    {
+        USplineComponent* SplineComponent = BridgeActor->EnsureBridgeSplineComponent();
+        if (SplineComponent != nullptr)
+        {
+            BindSplineComponentDelegates();
+        }
+        return SplineComponent;
+    }
+
+    if (USplineComponent* ExistingSplineComponent = GetBridgeSplineComponent())
+    {
+        return ExistingSplineComponent;
+    }
+
+    AActor* Owner = GetOwner();
+    if (Owner == nullptr)
+    {
+        return nullptr;
+    }
+
+    USplineComponent* SplineComponent = NewObject<USplineComponent>(Owner, TEXT("BridgeSplineComponent"), RF_Transactional);
+    if (SplineComponent == nullptr)
+    {
+        return nullptr;
+    }
+
+    Owner->AddInstanceComponent(SplineComponent);
+    SplineComponent->SetupAttachment(this);
+    SplineComponent->SetMobility(EComponentMobility::Movable);
+    SplineComponent->SetUsingAbsoluteLocation(false);
+    SplineComponent->SetUsingAbsoluteRotation(false);
+    SplineComponent->SetUsingAbsoluteScale(false);
+    SplineComponent->ComponentTags.AddUnique(TEXT("BlenderBridgeOwnedSpline"));
+    SplineComponent->RegisterComponent();
+    BindSplineComponentDelegates();
+    return SplineComponent;
+}
+
+void UBlenderBridgeComponent::RemoveOwnedBridgeSplineComponent()
+{
+    UnbindSplineComponentDelegates();
+
+    if (ABlenderBridgeActor* BridgeActor = Cast<ABlenderBridgeActor>(GetOwner()))
+    {
+        BridgeActor->RemoveBridgeSplineComponent();
+        return;
+    }
+
+    AActor* Owner = GetOwner();
+    if (Owner == nullptr)
+    {
+        return;
+    }
+
+    TInlineComponentArray<USplineComponent*> SplineComponents(Owner);
+    for (USplineComponent* SplineComponent : SplineComponents)
+    {
+        if (SplineComponent == nullptr || !SplineComponent->ComponentTags.Contains(TEXT("BlenderBridgeOwnedSpline")))
+        {
+            continue;
+        }
+
+        Owner->RemoveInstanceComponent(SplineComponent);
+        SplineComponent->DestroyComponent();
+        break;
+    }
 }
 
 void UBlenderBridgeComponent::HandleBridgeSplineChanged()
@@ -885,6 +983,7 @@ FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
 
     if (TargetCapabilities.TargetKind != EBlenderBridgeTargetKind::CurveOwner)
     {
+        RemoveOwnedBridgeSplineComponent();
         ImportedCurveTargetId.Reset();
         ImportedCurveHash.Reset();
         bSplineEditedSinceImport = false;
@@ -893,12 +992,21 @@ FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
 
     if (!TargetCapabilities.bSupportsCurveOwner)
     {
+        RemoveOwnedBridgeSplineComponent();
         ImportedCurveTargetId.Reset();
         ImportedCurveHash.Reset();
         bSplineEditedSinceImport = false;
         return TargetCapabilities.CompatibilityMessage.IsEmpty()
             ? TEXT(" Curve-owner spline editing is unavailable for this target.")
             : FString::Printf(TEXT(" Curve-owner spline editing unavailable: %s"), *TargetCapabilities.CompatibilityMessage);
+    }
+
+    if (EnsureBridgeSplineComponent() == nullptr)
+    {
+        ImportedCurveTargetId.Reset();
+        ImportedCurveHash.Reset();
+        bSplineEditedSinceImport = false;
+        return TEXT(" Curve-owner target is compatible, but the embedded Unreal spline could not be created.");
     }
 
     const FString IncomingCurveHash = MakeCurveOwnerHash(TargetCapabilities.OwnerCurve);
@@ -984,6 +1092,7 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
 {
     CancelPendingSplineCook();
     CancelPendingBakedOutputVisibilitySwap();
+    RemoveOwnedBridgeSplineComponent();
 
     if (PreviewMeshComponent != nullptr)
     {
@@ -999,6 +1108,7 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     LastCookedMesh.Reset();
     bHasValidCookedMesh = false;
     bPendingBakeAfterCook = false;
+    bPendingInstancedBake = false;
     bShowingBakedOutput = false;
     RuntimeInputEnums.Reset();
     RuntimeInputEnumHashes.Reset();
@@ -1134,18 +1244,24 @@ void UBlenderBridgeComponent::UpdatePreviewVisibility()
 
 void UBlenderBridgeComponent::UpdateBakedOutputVisibility()
 {
-    if (AStaticMeshActor* BakedStaticMeshActor = BakedActor.Get())
+    if (AActor* ExistingBakedActor = BakedActor.Get())
     {
         const bool bShouldShowBakedOutput = bShowingBakedOutput;
 #if WITH_EDITOR
-        BakedStaticMeshActor->SetIsTemporarilyHiddenInEditor(!bShouldShowBakedOutput);
+        ExistingBakedActor->SetIsTemporarilyHiddenInEditor(!bShouldShowBakedOutput);
 #endif
-        BakedStaticMeshActor->SetActorHiddenInGame(!bShouldShowBakedOutput);
+        ExistingBakedActor->SetActorHiddenInGame(!bShouldShowBakedOutput);
 
-        if (UStaticMeshComponent* StaticMeshComponent = BakedStaticMeshActor->GetStaticMeshComponent())
+        TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents(ExistingBakedActor);
+        for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
         {
-            StaticMeshComponent->SetVisibility(bShouldShowBakedOutput);
-            StaticMeshComponent->SetHiddenInGame(!bShouldShowBakedOutput);
+            if (PrimitiveComponent == nullptr)
+            {
+                continue;
+            }
+
+            PrimitiveComponent->SetVisibility(bShouldShowBakedOutput);
+            PrimitiveComponent->SetHiddenInGame(!bShouldShowBakedOutput);
         }
     }
 }
@@ -1179,4 +1295,9 @@ UMaterialInterface* UBlenderBridgeComponent::FindOverrideMaterialBySlotId(const 
 bool UBlenderBridgeComponent::HasCookedMesh() const
 {
     return bHasValidCookedMesh && LastCookedMesh.Positions.Num() > 0 && LastCookedMesh.Triangles.Num() > 0;
+}
+
+bool UBlenderBridgeComponent::HasBakedOutput() const
+{
+    return BakedActor.IsValid() || !BakedStaticMesh.IsNull() || !BakedPrototypeMeshes.IsEmpty();
 }

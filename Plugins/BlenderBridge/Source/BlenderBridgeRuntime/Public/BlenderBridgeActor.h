@@ -21,7 +21,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Blender Bridge", meta = (DisplayName = "Request Cook"))
     void RequestCook();
 
-    UFUNCTION(BlueprintCallable, Category = "Blender Bridge|Bake", meta = (DisplayName = "Bake To Static Mesh"))
+    UFUNCTION(BlueprintCallable, Category = "Blender Bridge|Bake", meta = (DisplayName = "Bake Output"))
     void BakeToStaticMesh();
 
     UFUNCTION(BlueprintCallable, Category = "Blender Bridge|Bake", meta = (DisplayName = "Select Baked Output"))
@@ -35,6 +35,9 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Blender Bridge")
     USplineComponent* GetBridgeSplineComponent() const;
+
+    USplineComponent* EnsureBridgeSplineComponent();
+    void RemoveBridgeSplineComponent();
 
 private:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge", meta = (AllowPrivateAccess = "true"))

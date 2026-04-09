@@ -24,6 +24,7 @@ bool FBlenderBridgeWorkerSession::Start(const FBlenderBridgeWorkerConfig& InConf
     Config = InConfig;
     PipeName = MakeUniqueName(TEXT("BlenderBridgePipe"));
     SharedMemoryName = MakeSharedMemoryName();
+    InstanceBakeSharedMemoryName = MakeSharedMemoryName();
 
     if (Config.BlenderExecutablePath.IsEmpty())
     {
@@ -115,6 +116,7 @@ void FBlenderBridgeWorkerSession::StopInternal(const bool bAllowCallbacks)
     }
 
     SharedMemory.Reset();
+    InstanceBakeSharedMemory.Reset();
 
     if (bAllowCallbacks)
     {
@@ -132,6 +134,14 @@ void FBlenderBridgeWorkerSession::StartOnBackgroundThread()
     {
         SetState(EBlenderBridgeConnectionState::Error);
         EmitLog(TEXT("Failed to create shared memory region."));
+        return;
+    }
+
+    if (!InstanceBakeSharedMemory.Create(InstanceBakeSharedMemoryName, Config.SharedMemoryBytes))
+    {
+        SetState(EBlenderBridgeConnectionState::Error);
+        EmitLog(TEXT("Failed to create instance-bake shared memory region."));
+        SharedMemory.Reset();
         return;
     }
 
@@ -153,6 +163,7 @@ void FBlenderBridgeWorkerSession::StartOnBackgroundThread()
         SetState(EBlenderBridgeConnectionState::Error);
         EmitLog(FString::Printf(TEXT("Failed to launch Blender worker: %s"), *Config.BlenderExecutablePath));
         SharedMemory.Reset();
+        InstanceBakeSharedMemory.Reset();
         return;
     }
 
@@ -260,6 +271,7 @@ void FBlenderBridgeWorkerSession::CleanupFailedStartup()
     }
 
     SharedMemory.Reset();
+    InstanceBakeSharedMemory.Reset();
 }
 
 void FBlenderBridgeWorkerSession::SendSerializedMessagesAsync(TArray<FBlenderBridgePendingMessage> Messages)
@@ -525,7 +537,7 @@ FString FBlenderBridgeWorkerSession::MakeSharedMemoryName() const
 FString FBlenderBridgeWorkerSession::BuildBlenderArguments() const
 {
     TArray<FString> Tokens;
-    Tokens.Reserve(10);
+    Tokens.Reserve(14);
 
     Tokens.Add(TEXT("--background"));
     Tokens.Add(TEXT("--python"));
@@ -536,6 +548,10 @@ FString FBlenderBridgeWorkerSession::BuildBlenderArguments() const
     Tokens.Add(TEXT("--shared-memory-name"));
     Tokens.Add(FString::Printf(TEXT("\"%s\""), *SharedMemoryName));
     Tokens.Add(TEXT("--shared-memory-bytes"));
+    Tokens.Add(LexToString(Config.SharedMemoryBytes));
+    Tokens.Add(TEXT("--instance-memory-name"));
+    Tokens.Add(FString::Printf(TEXT("\"%s\""), *InstanceBakeSharedMemoryName));
+    Tokens.Add(TEXT("--instance-memory-bytes"));
     Tokens.Add(LexToString(Config.SharedMemoryBytes));
 
     return FString::Join(Tokens, TEXT(" "));

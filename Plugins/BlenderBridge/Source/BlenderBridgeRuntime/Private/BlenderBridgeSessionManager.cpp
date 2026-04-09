@@ -324,6 +324,7 @@ void FBlenderBridgeSessionManager::StopSession()
 {
     PendingRequests.Reset();
     PendingCookRetryComponents.Reset();
+    PendingInstanceBakeRetryComponents.Reset();
     PendingWarmupPreviewComponents.Reset();
     TargetSchemaCaches.Reset();
     CookedTargetCaches.Reset();
@@ -356,6 +357,7 @@ void FBlenderBridgeSessionManager::StopSession()
 bool FBlenderBridgeSessionManager::RestartSession()
 {
     const TArray<TWeakObjectPtr<UBlenderBridgeComponent>> RetryComponents = PendingCookRetryComponents;
+    const TArray<TWeakObjectPtr<UBlenderBridgeComponent>> PendingInstanceRetryComponents = PendingInstanceBakeRetryComponents;
     TMap<FString, TWeakObjectPtr<UBlenderBridgeComponent>> WarmupPreviewComponents;
     for (const TPair<FString, TWeakObjectPtr<UBlenderBridgeComponent>>& Entry : PendingWarmupPreviewComponents)
     {
@@ -366,6 +368,7 @@ bool FBlenderBridgeSessionManager::RestartSession()
     }
     StopSession();
     PendingCookRetryComponents = RetryComponents;
+    PendingInstanceBakeRetryComponents = PendingInstanceRetryComponents;
     PendingWarmupPreviewComponents = WarmupPreviewComponents;
     bRestoreSourcesAfterReconnect = true;
     StartSessionInternal();
@@ -443,7 +446,7 @@ void FBlenderBridgeSessionManager::NotifySourceChanged(UBlenderBridgeComponent* 
         return;
     }
 
-    RequestEnsureSourceLoaded(Component, false, false);
+    RequestEnsureSourceLoaded(Component, false, false, false);
 }
 
 void FBlenderBridgeSessionManager::WarmSourceOnPreviewDrag(UBlenderBridgeSource* Source, UBlenderBridgeComponent* PreviewComponent)
@@ -463,13 +466,13 @@ void FBlenderBridgeSessionManager::WarmSourceOnPreviewDrag(UBlenderBridgeSource*
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (SourceCache != nullptr && SourceCache->bLoaded)
     {
-        QueueEnsureSourceLoadedRequest(SourceHandle, BlendFilePath, PreviewComponent, false, true);
+        QueueEnsureSourceLoadedRequest(SourceHandle, BlendFilePath, PreviewComponent, false, true, false);
         return;
     }
 
     if (Session.IsValid() && Session->IsConnected())
     {
-        QueueEnsureSourceLoadedRequest(SourceHandle, BlendFilePath, PreviewComponent, false, true);
+        QueueEnsureSourceLoadedRequest(SourceHandle, BlendFilePath, PreviewComponent, false, true, false);
         return;
     }
 
@@ -519,7 +522,7 @@ void FBlenderBridgeSessionManager::NotifyTargetChanged(UBlenderBridgeComponent* 
     }
 
     Component->SetShowingBakedOutput(false);
-    RequestDescribeTarget(Component, false, true);
+    RequestDescribeTarget(Component, false, true, false);
 }
 
 void FBlenderBridgeSessionManager::RefreshComponentSchema(UBlenderBridgeComponent* Component, const bool bForceReload)
@@ -553,11 +556,11 @@ void FBlenderBridgeSessionManager::RefreshComponentSchema(UBlenderBridgeComponen
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (!bForceReload && SourceCache != nullptr && SourceCache->bLoaded)
     {
-        ApplySourceCacheToComponents(SourceHandle, false, nullptr);
+        ApplySourceCacheToComponents(SourceHandle, false, false, nullptr);
         return;
     }
 
-    RequestEnsureSourceLoaded(Component, bForceReload, false);
+    RequestEnsureSourceLoaded(Component, bForceReload, false, false);
 }
 
 void FBlenderBridgeSessionManager::RequestCook(UBlenderBridgeComponent* Component)
@@ -591,17 +594,90 @@ void FBlenderBridgeSessionManager::RequestCook(UBlenderBridgeComponent* Componen
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (SourceCache == nullptr || !SourceCache->bLoaded)
     {
-        RequestEnsureSourceLoaded(Component, false, true);
+        RequestEnsureSourceLoaded(Component, false, true, false);
         return;
     }
 
-    ApplySourceCacheToComponents(SourceHandle, false, nullptr);
+    ApplySourceCacheToComponents(SourceHandle, false, false, nullptr);
     SendCookRequest(Component);
+}
+
+void FBlenderBridgeSessionManager::RequestInstanceBake(UBlenderBridgeComponent* Component)
+{
+    if (!IsValid(Component))
+    {
+        return;
+    }
+
+    if (!IsEditorBridgeSupported())
+    {
+        SetEditorOnlyUnsupported(Component);
+        return;
+    }
+
+    Component->SetShowingBakedOutput(false);
+
+    if (Component->Source == nullptr || GetComponentBlendFilePath(Component).IsEmpty())
+    {
+        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::SourceNotLoaded, TEXT("Select a BlenderBridgeSource with a valid Blend File."));
+        Component->bPendingInstancedBake = false;
+        return;
+    }
+
+    if (!IsSessionConnected())
+    {
+        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::NoSession, TEXT("Global Blender session is not running."));
+        Component->bPendingInstancedBake = false;
+        return;
+    }
+
+    const FString SourceHandle = Component->GetSourceHandle();
+    const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
+    if (SourceCache == nullptr || !SourceCache->bLoaded)
+    {
+        RequestEnsureSourceLoaded(Component, false, false, true);
+        return;
+    }
+
+    ApplySourceCacheToComponents(SourceHandle, false, false, nullptr);
+    SendInstanceBakeRequest(Component);
 }
 
 bool FBlenderBridgeSessionManager::IsSessionConnected() const
 {
     return Session.IsValid() && Session->IsConnected();
+}
+
+const FBridgeDecodedInstanceBake* FBlenderBridgeSessionManager::FindCachedInstanceBake(const UBlenderBridgeComponent* Component) const
+{
+    if (!IsValid(Component))
+    {
+        return nullptr;
+    }
+
+    FString CurveHash;
+    if (Component->TargetCapabilities.bSupportsCurveOwner)
+    {
+        FBridgeCurveOwnerData CurveData;
+        if (!Component->BuildCurveOwnerData(CurveData, CurveHash))
+        {
+            return nullptr;
+        }
+    }
+
+    FString CookCacheKey;
+    if (!BuildCookCacheKey(Component->GetSourceHandle(), Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, CookCacheKey))
+    {
+        return nullptr;
+    }
+
+    const FCookedTargetCache* CachedCook = CookedTargetCaches.Find(CookCacheKey);
+    if (CachedCook == nullptr || CachedCook->DecodedInstanceBake.Prototypes.IsEmpty() || CachedCook->DecodedInstanceBake.Placements.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    return &CachedCook->DecodedInstanceBake;
 }
 
 void FBlenderBridgeSessionManager::StartSessionInternal()
@@ -689,7 +765,7 @@ void FBlenderBridgeSessionManager::HandleSessionStateChanged(const EBlenderBridg
         const TMap<FString, FString> SourcesToRestore = GatherSourcesToRestore();
         for (const TPair<FString, FString>& Entry : SourcesToRestore)
         {
-            QueueEnsureSourceLoadedRequest(Entry.Key, Entry.Value, nullptr, false, false);
+            QueueEnsureSourceLoadedRequest(Entry.Key, Entry.Value, nullptr, false, false, false);
         }
     }
 
@@ -705,7 +781,7 @@ void FBlenderBridgeSessionManager::HandleSessionStateChanged(const EBlenderBridg
                 continue;
             }
 
-            QueueEnsureSourceLoadedRequest(Entry.Key, Entry.Key, Entry.Value.Get(), false, Entry.Value.IsValid());
+            QueueEnsureSourceLoadedRequest(Entry.Key, Entry.Key, Entry.Value.Get(), false, Entry.Value.IsValid(), false);
         }
     }
 }
@@ -746,7 +822,11 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
         SourceCache.Targets = MoveTemp(Targets);
         SourceCache.bLoaded = true;
 
-        ApplySourceCacheToComponents(SourceHandle, PendingRequest.bRequestCookAfterDescribe, PendingRequest.Component.Get());
+        ApplySourceCacheToComponents(
+            SourceHandle,
+            PendingRequest.bRequestCookAfterDescribe,
+            PendingRequest.bRequestInstanceBakeAfterDescribe,
+            PendingRequest.Component.Get());
         return;
     }
 
@@ -771,6 +851,10 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
         TArray<FBridgeInputSchema> Schema;
         if (!BlenderBridge::ParseInputSchema(Message.Payload, Schema))
         {
+            if (PendingRequest.bRequestInstanceBakeAfterDescribe)
+            {
+                Component->bPendingInstancedBake = false;
+            }
             Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to parse target schema from Blender."));
             return;
         }
@@ -806,6 +890,12 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
         if (PendingRequest.bRequestCookAfterDescribe)
         {
             SendCookRequest(Component);
+            return;
+        }
+
+        if (PendingRequest.bRequestInstanceBakeAfterDescribe)
+        {
+            SendInstanceBakeRequest(Component);
         }
         return;
     }
@@ -855,6 +945,60 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
         return;
     }
 
+    if (Message.Type == EBlenderBridgeMessageType::InstanceBakeComplete)
+    {
+        FPendingRequest PendingRequest;
+        if (!RequestId.IsEmpty())
+        {
+            if (FPendingRequest* ExistingRequest = PendingRequests.Find(RequestId))
+            {
+                PendingRequest = *ExistingRequest;
+                PendingRequests.Remove(RequestId);
+            }
+        }
+
+        UBlenderBridgeComponent* Component = PendingRequest.Component.Get();
+        if (!IsValid(Component) || !Session.IsValid())
+        {
+            return;
+        }
+
+        double SlotNumber = 0.0;
+        if (!Message.Payload.IsValid() || !Message.Payload->TryGetNumberField(TEXT("slot"), SlotNumber))
+        {
+            Component->bPendingInstancedBake = false;
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("InstanceBakeComplete was missing a shared-memory slot."));
+            return;
+        }
+
+        FBridgeDecodedInstanceBake DecodedInstanceBake;
+        if (!Session->GetInstanceBakeSharedMemory().ReadInstanceBake(static_cast<uint32>(SlotNumber), DecodedInstanceBake))
+        {
+            Component->bPendingInstancedBake = false;
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to read instanced bake data from shared memory."));
+            return;
+        }
+
+        if (!PendingRequest.CookCacheKey.IsEmpty())
+        {
+            FCookedTargetCache& CachedCook = CookedTargetCaches.FindOrAdd(PendingRequest.CookCacheKey);
+            CachedCook.DecodedInstanceBake = DecodedInstanceBake;
+        }
+
+        if (FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(Component))
+        {
+            Component->bPendingInstancedBake = false;
+            return;
+        }
+
+        Component->bPendingInstancedBake = false;
+        if (Component->ComponentStatus != EBlenderBridgeComponentStatus::Error)
+        {
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to bake the bridge output as instanced geometry."));
+        }
+        return;
+    }
+
     if (Message.Type == EBlenderBridgeMessageType::ResizeRequired)
     {
         uint64 RequiredSlotBytes = 0;
@@ -865,16 +1009,18 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
         }
 
         UBlenderBridgeComponent* RetryComponent = nullptr;
+        EBridgeManagerRequestKind RetryKind = EBridgeManagerRequestKind::CookTarget;
         if (!RequestId.IsEmpty())
         {
             if (FPendingRequest* ExistingRequest = PendingRequests.Find(RequestId))
             {
                 RetryComponent = ExistingRequest->Component.Get();
+                RetryKind = ExistingRequest->Kind;
                 PendingRequests.Remove(RequestId);
             }
         }
 
-        RestartSessionForResize(RetryComponent, RequiredSlotBytes);
+        RestartSessionForResize(RetryComponent, RetryKind, RequiredSlotBytes);
         return;
     }
 
@@ -892,6 +1038,11 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             {
                 if (UBlenderBridgeComponent* Component = ExistingRequest->Component.Get())
                 {
+                    if (ExistingRequest->Kind == EBridgeManagerRequestKind::RequestInstanceBake ||
+                        ExistingRequest->bRequestInstanceBakeAfterDescribe)
+                    {
+                        Component->bPendingInstancedBake = false;
+                    }
                     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, ErrorMessage);
                 }
                 PendingRequests.Remove(RequestId);
@@ -964,7 +1115,8 @@ void FBlenderBridgeSessionManager::ClearCachedTargetData(const FString& SourceHa
 bool FBlenderBridgeSessionManager::TryApplyCachedTargetDescription(
     UBlenderBridgeComponent* Component,
     const bool bPreserveInputValues,
-    const bool bRequestCookAfterDescribe)
+    const bool bRequestCookAfterDescribe,
+    const bool bRequestInstanceBakeAfterDescribe)
 {
     if (!IsValid(Component) || Component->TargetId.IsEmpty())
     {
@@ -988,6 +1140,11 @@ bool FBlenderBridgeSessionManager::TryApplyCachedTargetDescription(
     if (bRequestCookAfterDescribe)
     {
         return SendCookRequest(Component);
+    }
+
+    if (bRequestInstanceBakeAfterDescribe)
+    {
+        return SendInstanceBakeRequest(Component);
     }
 
     return true;
@@ -1028,9 +1185,15 @@ bool FBlenderBridgeSessionManager::TryApplyCachedCook(UBlenderBridgeComponent* C
     return true;
 }
 
+bool FBlenderBridgeSessionManager::TryApplyCachedInstanceBake(UBlenderBridgeComponent* Component)
+{
+    return FindCachedInstanceBake(Component) != nullptr;
+}
+
 void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
     const FString& SourceHandle,
     const bool bRequestCookForPendingComponent,
+    const bool bRequestInstanceBakeForPendingComponent,
     UBlenderBridgeComponent* PendingComponent)
 {
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
@@ -1111,14 +1274,21 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
 
         const bool bRequestCook = (PendingComponent != nullptr && PendingComponent == Component && bRequestCookForPendingComponent)
             || IsRetryComponent(PendingCookRetryComponents, Component);
+        const bool bRequestInstanceBake =
+            (PendingComponent != nullptr && PendingComponent == Component && bRequestInstanceBakeForPendingComponent)
+            || IsRetryComponent(PendingInstanceBakeRetryComponents, Component);
         const bool bPreserveInputValues = (PreviousSchemaTargetId == Component->TargetId);
 
         PendingCookRetryComponents.RemoveAll([Component](const TWeakObjectPtr<UBlenderBridgeComponent>& Entry)
         {
             return !Entry.IsValid() || Entry.Get() == Component;
         });
+        PendingInstanceBakeRetryComponents.RemoveAll([Component](const TWeakObjectPtr<UBlenderBridgeComponent>& Entry)
+        {
+            return !Entry.IsValid() || Entry.Get() == Component;
+        });
 
-        RequestDescribeTarget(Component, bPreserveInputValues, bRequestCook);
+        RequestDescribeTarget(Component, bPreserveInputValues, bRequestCook, bRequestInstanceBake);
     };
 
     bool bProcessedPendingComponent = false;
@@ -1141,7 +1311,8 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
 bool FBlenderBridgeSessionManager::RequestEnsureSourceLoaded(
     UBlenderBridgeComponent* Component,
     const bool bForceReload,
-    const bool bRequestCookAfterDescribe)
+    const bool bRequestCookAfterDescribe,
+    const bool bRequestInstanceBakeAfterDescribe)
 {
     if (!IsValid(Component) || !Session.IsValid() || !Session->IsConnected())
     {
@@ -1163,7 +1334,13 @@ bool FBlenderBridgeSessionManager::RequestEnsureSourceLoaded(
     FSourceCache& SourceCache = SourceCaches.FindOrAdd(SourceHandle);
     SourceCache.BlendFilePath = BlendFilePath;
 
-    return QueueEnsureSourceLoadedRequest(SourceHandle, BlendFilePath, Component, bForceReload, bRequestCookAfterDescribe);
+    return QueueEnsureSourceLoadedRequest(
+        SourceHandle,
+        BlendFilePath,
+        Component,
+        bForceReload,
+        bRequestCookAfterDescribe,
+        bRequestInstanceBakeAfterDescribe);
 }
 
 bool FBlenderBridgeSessionManager::QueueEnsureSourceLoadedRequest(
@@ -1171,7 +1348,8 @@ bool FBlenderBridgeSessionManager::QueueEnsureSourceLoadedRequest(
     const FString& BlendFilePath,
     UBlenderBridgeComponent* Component,
     const bool bForceReload,
-    const bool bRequestCookAfterDescribe)
+    const bool bRequestCookAfterDescribe,
+    const bool bRequestInstanceBakeAfterDescribe)
 {
     if (!Session.IsValid() || !Session->IsConnected())
     {
@@ -1198,7 +1376,7 @@ bool FBlenderBridgeSessionManager::QueueEnsureSourceLoadedRequest(
     {
         if (IsValid(Component))
         {
-            ApplySourceCacheToComponents(SourceHandle, bRequestCookAfterDescribe, Component);
+            ApplySourceCacheToComponents(SourceHandle, bRequestCookAfterDescribe, bRequestInstanceBakeAfterDescribe, Component);
         }
         return true;
     }
@@ -1224,6 +1402,7 @@ bool FBlenderBridgeSessionManager::QueueEnsureSourceLoadedRequest(
 
         ExistingRequest.bForceReload |= bForceReload;
         ExistingRequest.bRequestCookAfterDescribe |= bRequestCookAfterDescribe;
+        ExistingRequest.bRequestInstanceBakeAfterDescribe |= bRequestInstanceBakeAfterDescribe;
         return true;
     }
 
@@ -1240,6 +1419,7 @@ bool FBlenderBridgeSessionManager::QueueEnsureSourceLoadedRequest(
     PendingRequest.SourceHandle = SourceHandle;
     PendingRequest.bForceReload = bForceReload;
     PendingRequest.bRequestCookAfterDescribe = bRequestCookAfterDescribe;
+    PendingRequest.bRequestInstanceBakeAfterDescribe = bRequestInstanceBakeAfterDescribe;
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     if (IsValid(Component))
@@ -1253,7 +1433,8 @@ bool FBlenderBridgeSessionManager::QueueEnsureSourceLoadedRequest(
 bool FBlenderBridgeSessionManager::RequestDescribeTarget(
     UBlenderBridgeComponent* Component,
     const bool bPreserveInputValues,
-    const bool bRequestCookAfterDescribe)
+    const bool bRequestCookAfterDescribe,
+    const bool bRequestInstanceBakeAfterDescribe)
 {
     if (!IsValid(Component) || !Session.IsValid() || !Session->IsConnected())
     {
@@ -1268,7 +1449,7 @@ bool FBlenderBridgeSessionManager::RequestDescribeTarget(
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (SourceCache == nullptr || !SourceCache->bLoaded)
     {
-        return RequestEnsureSourceLoaded(Component, false, bRequestCookAfterDescribe);
+        return RequestEnsureSourceLoaded(Component, false, bRequestCookAfterDescribe, bRequestInstanceBakeAfterDescribe);
     }
 
     if (Component->TargetId.IsEmpty() || Component->FindTargetDescriptor(Component->TargetId) == nullptr)
@@ -1277,7 +1458,11 @@ bool FBlenderBridgeSessionManager::RequestDescribeTarget(
         return false;
     }
 
-    if (TryApplyCachedTargetDescription(Component, bPreserveInputValues, bRequestCookAfterDescribe))
+    if (TryApplyCachedTargetDescription(
+        Component,
+        bPreserveInputValues,
+        bRequestCookAfterDescribe,
+        bRequestInstanceBakeAfterDescribe))
     {
         return true;
     }
@@ -1295,6 +1480,7 @@ bool FBlenderBridgeSessionManager::RequestDescribeTarget(
 
         ExistingRequest.bPreserveInputValues |= bPreserveInputValues;
         ExistingRequest.bRequestCookAfterDescribe |= bRequestCookAfterDescribe;
+        ExistingRequest.bRequestInstanceBakeAfterDescribe |= bRequestInstanceBakeAfterDescribe;
         return true;
     }
 
@@ -1311,6 +1497,7 @@ bool FBlenderBridgeSessionManager::RequestDescribeTarget(
     PendingRequest.TargetId = Component->TargetId;
     PendingRequest.bPreserveInputValues = bPreserveInputValues;
     PendingRequest.bRequestCookAfterDescribe = bRequestCookAfterDescribe;
+    PendingRequest.bRequestInstanceBakeAfterDescribe = bRequestInstanceBakeAfterDescribe;
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::SchemaPending, TEXT("Refreshing target schema from Blender."));
@@ -1332,7 +1519,7 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (SourceCache == nullptr || !SourceCache->bLoaded)
     {
-        return RequestEnsureSourceLoaded(Component, false, true);
+        return RequestEnsureSourceLoaded(Component, false, true, false);
     }
 
     if (Component->TargetId.IsEmpty() || Component->FindTargetDescriptor(Component->TargetId) == nullptr)
@@ -1345,7 +1532,7 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
     // currently selected target, we should still allow a cook with an empty values payload.
     if (Component->SchemaTargetId != Component->TargetId)
     {
-        return RequestDescribeTarget(Component, Component->SchemaTargetId == Component->TargetId, true);
+        return RequestDescribeTarget(Component, Component->SchemaTargetId == Component->TargetId, true, false);
     }
 
     FBridgeCurveOwnerData CurveOwnerData;
@@ -1392,7 +1579,103 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
     return Session->QueueMessage(EBlenderBridgeMessageType::CookTarget, Payload);
 }
 
-void FBlenderBridgeSessionManager::RestartSessionForResize(UBlenderBridgeComponent* RetryComponent, const uint64 RequiredSlotBytes)
+bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeComponent* Component)
+{
+    if (!IsValid(Component) || !Session.IsValid() || !Session->IsConnected())
+    {
+        if (IsValid(Component))
+        {
+            Component->bPendingInstancedBake = false;
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::NoSession, TEXT("Global Blender session is not running."));
+        }
+        return false;
+    }
+
+    const FString SourceHandle = Component->GetSourceHandle();
+    const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
+    if (SourceCache == nullptr || !SourceCache->bLoaded)
+    {
+        return RequestEnsureSourceLoaded(Component, false, false, true);
+    }
+
+    if (Component->TargetId.IsEmpty() || Component->FindTargetDescriptor(Component->TargetId) == nullptr)
+    {
+        Component->bPendingInstancedBake = false;
+        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::TargetUnresolved, TEXT("Select a target for this source."));
+        return false;
+    }
+
+    if (Component->SchemaTargetId != Component->TargetId)
+    {
+        return RequestDescribeTarget(Component, Component->SchemaTargetId == Component->TargetId, false, true);
+    }
+
+    if (TryApplyCachedInstanceBake(Component))
+    {
+        if (FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(Component))
+        {
+            Component->bPendingInstancedBake = false;
+            return true;
+        }
+
+        Component->bPendingInstancedBake = false;
+        if (Component->ComponentStatus != EBlenderBridgeComponentStatus::Error)
+        {
+            Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to bake the bridge output as instanced geometry."));
+        }
+        return false;
+    }
+
+    FBridgeCurveOwnerData CurveOwnerData;
+    FString CurveHash;
+    if (Component->TargetCapabilities.bSupportsCurveOwner)
+    {
+        if (!Component->BuildCurveOwnerData(CurveOwnerData, CurveHash))
+        {
+            Component->bPendingInstancedBake = false;
+            Component->SetBridgeStatus(
+                EBlenderBridgeComponentStatus::Error,
+                TEXT("Curve-owner target requires a valid embedded Unreal spline before it can bake instances."));
+            return false;
+        }
+    }
+
+    Component->RefreshComponentHandle();
+    const FString RequestId = MakeRequestId();
+    TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+    Payload->SetStringField(RequestIdFieldName, RequestId);
+    Payload->SetStringField(SourceHandleFieldName, SourceHandle);
+    Payload->SetStringField(TargetIdFieldName, Component->TargetId);
+    Payload->SetStringField(ComponentHandleFieldName, Component->GetComponentHandle());
+    BlenderBridge::AddInputValuesToPayload(Component->InputSchema, Component->InputValues, Payload);
+    if (Component->TargetCapabilities.bSupportsCurveOwner)
+    {
+        Payload->SetStringField(CurveHashFieldName, CurveHash);
+        BlenderBridge::AddCurveOwnerDataToPayload(CurveOwnerData, Payload);
+    }
+
+    FPendingRequest PendingRequest;
+    PendingRequest.Kind = EBridgeManagerRequestKind::RequestInstanceBake;
+    PendingRequest.Component = Component;
+    PendingRequest.SourceHandle = SourceHandle;
+    PendingRequest.TargetId = Component->TargetId;
+    BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, PendingRequest.CookCacheKey);
+    PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
+
+    Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooking, TEXT("Preparing instanced bake payload."));
+    if (Session->QueueMessage(EBlenderBridgeMessageType::RequestInstanceBake, Payload))
+    {
+        return true;
+    }
+
+    Component->bPendingInstancedBake = false;
+    return false;
+}
+
+void FBlenderBridgeSessionManager::RestartSessionForResize(
+    UBlenderBridgeComponent* RetryComponent,
+    const EBridgeManagerRequestKind RetryKind,
+    const uint64 RequiredSlotBytes)
 {
     UBlenderBridgeSettings* Settings = GetMutableDefault<UBlenderBridgeSettings>();
     const uint64 CurrentTotalBytes = Settings != nullptr
@@ -1421,11 +1704,18 @@ void FBlenderBridgeSessionManager::RestartSessionForResize(UBlenderBridgeCompone
 
     if (IsValid(RetryComponent))
     {
-        PendingCookRetryComponents.Add(RetryComponent);
+        if (RetryKind == EBridgeManagerRequestKind::RequestInstanceBake)
+        {
+            PendingInstanceBakeRetryComponents.Add(RetryComponent);
+        }
+        else
+        {
+            PendingCookRetryComponents.Add(RetryComponent);
+        }
         RetryComponent->SetBridgeStatus(
             EBlenderBridgeComponentStatus::SchemaPending,
             FString::Printf(
-                TEXT("Growing shared memory from %llu to %llu bytes. Restarting the global session and retrying the cook."),
+                TEXT("Growing shared memory from %llu to %llu bytes. Restarting the global session and retrying the pending bridge request."),
                 CurrentTotalBytes,
                 ExpandedSharedMemoryBytes));
     }

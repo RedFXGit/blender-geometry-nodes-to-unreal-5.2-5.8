@@ -11,13 +11,6 @@ ABlenderBridgeActor::ABlenderBridgeActor()
 
     BridgeComponent = CreateDefaultSubobject<UBlenderBridgeComponent>(TEXT("BlenderBridgeComponent"));
     SetRootComponent(BridgeComponent);
-
-    BridgeSplineComponent = CreateDefaultSubobject<USplineComponent>(TEXT("BridgeSplineComponent"));
-    BridgeSplineComponent->SetupAttachment(BridgeComponent);
-    BridgeSplineComponent->SetMobility(EComponentMobility::Movable);
-    BridgeSplineComponent->SetUsingAbsoluteLocation(false);
-    BridgeSplineComponent->SetUsingAbsoluteRotation(false);
-    BridgeSplineComponent->SetUsingAbsoluteScale(false);
 }
 
 void ABlenderBridgeActor::RefreshInputSchema()
@@ -68,4 +61,64 @@ UBlenderBridgeComponent* ABlenderBridgeActor::GetBridgeComponent() const
 USplineComponent* ABlenderBridgeActor::GetBridgeSplineComponent() const
 {
     return BridgeSplineComponent;
+}
+
+USplineComponent* ABlenderBridgeActor::EnsureBridgeSplineComponent()
+{
+    if (BridgeSplineComponent != nullptr)
+    {
+        return BridgeSplineComponent;
+    }
+
+    TInlineComponentArray<USplineComponent*> ExistingSplineComponents(this);
+    for (USplineComponent* ExistingSplineComponent : ExistingSplineComponents)
+    {
+        if (ExistingSplineComponent != nullptr && ExistingSplineComponent->GetFName() == TEXT("BridgeSplineComponent"))
+        {
+            BridgeSplineComponent = ExistingSplineComponent;
+            return BridgeSplineComponent;
+        }
+    }
+
+    BridgeSplineComponent = NewObject<USplineComponent>(this, TEXT("BridgeSplineComponent"), RF_Transactional);
+    if (BridgeSplineComponent == nullptr)
+    {
+        return nullptr;
+    }
+
+    AddInstanceComponent(BridgeSplineComponent);
+    BridgeSplineComponent->SetupAttachment(BridgeComponent);
+    BridgeSplineComponent->SetMobility(EComponentMobility::Movable);
+    BridgeSplineComponent->SetUsingAbsoluteLocation(false);
+    BridgeSplineComponent->SetUsingAbsoluteRotation(false);
+    BridgeSplineComponent->SetUsingAbsoluteScale(false);
+    BridgeSplineComponent->ComponentTags.AddUnique(TEXT("BlenderBridgeOwnedSpline"));
+    BridgeSplineComponent->RegisterComponent();
+    return BridgeSplineComponent;
+}
+
+void ABlenderBridgeActor::RemoveBridgeSplineComponent()
+{
+    USplineComponent* SplineComponent = BridgeSplineComponent;
+    if (SplineComponent == nullptr)
+    {
+        TInlineComponentArray<USplineComponent*> ExistingSplineComponents(this);
+        for (USplineComponent* ExistingSplineComponent : ExistingSplineComponents)
+        {
+            if (ExistingSplineComponent != nullptr && ExistingSplineComponent->GetFName() == TEXT("BridgeSplineComponent"))
+            {
+                SplineComponent = ExistingSplineComponent;
+                break;
+            }
+        }
+    }
+
+    BridgeSplineComponent = nullptr;
+    if (SplineComponent == nullptr)
+    {
+        return;
+    }
+
+    RemoveInstanceComponent(SplineComponent);
+    SplineComponent->DestroyComponent();
 }
