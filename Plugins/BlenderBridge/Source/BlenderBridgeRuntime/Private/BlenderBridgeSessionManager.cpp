@@ -8,8 +8,11 @@
 #include "BlenderBridgeWorkerSession.h"
 #include "Dom/JsonObject.h"
 #include "Interfaces/IPluginManager.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformTime.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
@@ -26,6 +29,258 @@ namespace
     constexpr TCHAR CurveHashFieldName[] = TEXT("curve_hash");
     constexpr TCHAR ForceReloadFieldName[] = TEXT("force_reload");
     constexpr TCHAR CacheKeyDelimiter[] = TEXT("|");
+    constexpr TCHAR TimingWorkerTotalFieldName[] = TEXT("timing_worker_total_ms");
+    constexpr TCHAR TimingWorkerResolveFieldName[] = TEXT("timing_worker_resolve_ms");
+    constexpr TCHAR TimingWorkerInputsFieldName[] = TEXT("timing_worker_inputs_ms");
+    constexpr TCHAR TimingWorkerEvalFieldName[] = TEXT("timing_worker_eval_ms");
+    constexpr TCHAR TimingWorkerExtractFieldName[] = TEXT("timing_worker_extract_ms");
+    constexpr TCHAR TimingWorkerExtractGeometryAccessFieldName[] = TEXT("timing_worker_extract_geometry_access_ms");
+    constexpr TCHAR TimingWorkerExtractBuildPartsFieldName[] = TEXT("timing_worker_extract_build_parts_ms");
+    constexpr TCHAR TimingWorkerExtractMeshPrepareFieldName[] = TEXT("timing_worker_extract_mesh_prepare_ms");
+    constexpr TCHAR TimingWorkerExtractMeshReadFieldName[] = TEXT("timing_worker_extract_mesh_read_ms");
+    constexpr TCHAR TimingWorkerExtractMeshExpandFieldName[] = TEXT("timing_worker_extract_mesh_expand_ms");
+    constexpr TCHAR TimingWorkerExtractTransformFieldName[] = TEXT("timing_worker_extract_transform_ms");
+    constexpr TCHAR TimingWorkerExtractMergeFieldName[] = TEXT("timing_worker_extract_merge_ms");
+    constexpr TCHAR TimingWorkerSerializeFieldName[] = TEXT("timing_worker_serialize_ms");
+    constexpr TCHAR TimingWorkerSharedWriteFieldName[] = TEXT("timing_worker_shared_write_ms");
+    constexpr TCHAR TimingHistoryFileName[] = TEXT("BlenderBridgeTimingHistory.csv");
+
+    TAutoConsoleVariable<int32> CVarBlenderBridgeLogCookTimings(
+        TEXT("blenderbridge.LogCookTimings"),
+        0,
+        TEXT("Logs per-request timing breakdowns for Blender Bridge cook and instance-bake requests."),
+        ECVF_Default);
+
+    struct FBridgeWorkerTimingBreakdown
+    {
+        double TotalMs = -1.0;
+        double ResolveMs = -1.0;
+        double InputsMs = -1.0;
+        double EvalMs = -1.0;
+        double ExtractMs = -1.0;
+        double ExtractGeometryAccessMs = -1.0;
+        double ExtractBuildPartsMs = -1.0;
+        double ExtractMeshPrepareMs = -1.0;
+        double ExtractMeshReadMs = -1.0;
+        double ExtractMeshExpandMs = -1.0;
+        double ExtractTransformMs = -1.0;
+        double ExtractMergeMs = -1.0;
+        double SerializeMs = -1.0;
+        double SharedWriteMs = -1.0;
+    };
+
+    struct FBridgeTimingHistoryRow
+    {
+        FString TimestampUtc;
+        FString Kind;
+        bool bCacheHit = false;
+        FString RunLabel;
+        FString ScenarioId;
+        int32 IterationIndex = INDEX_NONE;
+        FString ActionKind;
+        FString RequestId;
+        FString ActorName;
+        FString TargetId;
+        FString Result;
+        double TotalToVisibleMs = -1.0;
+        double TotalToFinishMs = -1.0;
+        double ResponseWaitMs = -1.0;
+        double WorkerTotalMs = -1.0;
+        double WorkerResolveMs = -1.0;
+        double WorkerInputsMs = -1.0;
+        double WorkerEvalMs = -1.0;
+        double WorkerExtractMs = -1.0;
+        double ExtractGeometryAccessMs = -1.0;
+        double ExtractBuildPartsMs = -1.0;
+        double ExtractMeshPrepareMs = -1.0;
+        double ExtractMeshReadMs = -1.0;
+        double ExtractMeshExpandMs = -1.0;
+        double ExtractTransformMs = -1.0;
+        double ExtractMergeMs = -1.0;
+        double WorkerSerializeMs = -1.0;
+        double WorkerSharedWriteMs = -1.0;
+        double ReadDecodeMs = -1.0;
+        double PreviewApplyMs = -1.0;
+        double BakeExecuteMs = -1.0;
+        double OverheadMs = -1.0;
+    };
+
+    bool ShouldLogCookTimings()
+    {
+        return CVarBlenderBridgeLogCookTimings.GetValueOnGameThread() != 0;
+    }
+
+    bool TryGetTimingFieldMs(const TSharedPtr<FJsonObject>& Payload, const TCHAR* FieldName, double& OutValueMs)
+    {
+        OutValueMs = -1.0;
+        return Payload.IsValid() && Payload->TryGetNumberField(FieldName, OutValueMs);
+    }
+
+    void ParseWorkerTimingBreakdown(const TSharedPtr<FJsonObject>& Payload, FBridgeWorkerTimingBreakdown& OutTimings)
+    {
+        TryGetTimingFieldMs(Payload, TimingWorkerTotalFieldName, OutTimings.TotalMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerResolveFieldName, OutTimings.ResolveMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerInputsFieldName, OutTimings.InputsMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerEvalFieldName, OutTimings.EvalMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractFieldName, OutTimings.ExtractMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractGeometryAccessFieldName, OutTimings.ExtractGeometryAccessMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractBuildPartsFieldName, OutTimings.ExtractBuildPartsMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractMeshPrepareFieldName, OutTimings.ExtractMeshPrepareMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractMeshReadFieldName, OutTimings.ExtractMeshReadMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractMeshExpandFieldName, OutTimings.ExtractMeshExpandMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractTransformFieldName, OutTimings.ExtractTransformMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerExtractMergeFieldName, OutTimings.ExtractMergeMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerSerializeFieldName, OutTimings.SerializeMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerSharedWriteFieldName, OutTimings.SharedWriteMs);
+    }
+
+    void PopulateTimingHistoryMetadataFromComponent(const UBlenderBridgeComponent* Component, FBridgeTimingHistoryRow& OutRow)
+    {
+        if (Component == nullptr)
+        {
+            return;
+        }
+
+        OutRow.RunLabel = Component->GetAutomationRunLabel();
+        OutRow.ScenarioId = Component->GetAutomationScenarioId();
+        OutRow.IterationIndex = Component->GetAutomationIterationIndex();
+        OutRow.ActionKind = Component->GetAutomationActionKind();
+    }
+
+    FString FormatTimingMs(const double TimingMs)
+    {
+        return TimingMs >= 0.0
+            ? FString::Printf(TEXT("%.2fms"), TimingMs)
+            : FString(TEXT("n/a"));
+    }
+
+    FString FormatTimingCsvValue(const double TimingMs)
+    {
+        return TimingMs >= 0.0
+            ? FString::Printf(TEXT("%.3f"), TimingMs)
+            : FString();
+    }
+
+    FString EscapeCsvField(FString Value)
+    {
+        const bool bNeedsQuotes =
+            Value.Contains(TEXT(",")) ||
+            Value.Contains(TEXT("\"")) ||
+            Value.Contains(TEXT("\n")) ||
+            Value.Contains(TEXT("\r"));
+
+        Value.ReplaceInline(TEXT("\""), TEXT("\"\""));
+        return bNeedsQuotes ? FString::Printf(TEXT("\"%s\""), *Value) : Value;
+    }
+
+    FString GetTimingHistoryFilePath()
+    {
+        FString OutputDirectory;
+        if (const UBlenderBridgeSettings* Settings = GetDefault<UBlenderBridgeSettings>())
+        {
+            OutputDirectory = Settings->TimingHistoryOutputDirectory.Path;
+        }
+
+        if (OutputDirectory.IsEmpty())
+        {
+            OutputDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+        }
+        else
+        {
+            OutputDirectory = FPaths::ConvertRelativePathToFull(OutputDirectory);
+        }
+
+        FPaths::NormalizeDirectoryName(OutputDirectory);
+        return FPaths::Combine(OutputDirectory, TimingHistoryFileName);
+    }
+
+    void AppendTimingHistoryRow(const FBridgeTimingHistoryRow& Row)
+    {
+        const FString FilePath = GetTimingHistoryFilePath();
+        IFileManager::Get().MakeDirectory(*FPaths::GetPath(FilePath), true);
+        const FString Header =
+            TEXT("timestamp_utc,kind,cache_hit,run_label,scenario_id,iteration_index,action_kind,request_id,actor,target,result,total_to_visible_ms,total_to_finish_ms,response_wait_ms,")
+            TEXT("worker_total_ms,worker_resolve_ms,worker_inputs_ms,worker_eval_ms,worker_extract_ms,")
+            TEXT("extract_geometry_access_ms,extract_build_parts_ms,extract_mesh_prepare_ms,extract_mesh_read_ms,")
+            TEXT("extract_mesh_expand_ms,extract_transform_ms,extract_merge_ms,worker_serialize_ms,worker_shared_write_ms,")
+            TEXT("read_decode_ms,preview_apply_ms,bake_execute_ms,overhead_ms");
+
+        bool bFileExists = IFileManager::Get().FileExists(*FilePath);
+        if (bFileExists)
+        {
+            FString ExistingContents;
+            if (FFileHelper::LoadFileToString(ExistingContents, *FilePath))
+            {
+                FString ExistingHeader;
+                if (ExistingContents.Split(TEXT("\n"), &ExistingHeader, nullptr))
+                {
+                    ExistingHeader.TrimEndInline();
+                    if (ExistingHeader != Header)
+                    {
+                        const FString LegacyFilePath = FPaths::Combine(
+                            FPaths::GetPath(FilePath),
+                            FString::Printf(
+                                TEXT("BlenderBridgeTimingHistory_Legacy_%s.csv"),
+                                *FDateTime::UtcNow().ToString(TEXT("%Y%m%dT%H%M%SZ"))));
+                        if (IFileManager::Get().Move(*LegacyFilePath, *FilePath, true, true))
+                        {
+                            UE_LOG(LogBlenderBridge, Warning, TEXT("Moved legacy timing history to %s due to a CSV schema change."), *LegacyFilePath);
+                            bFileExists = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        TArray<FString> Columns;
+        Columns.Reserve(32);
+        Columns.Add(EscapeCsvField(Row.TimestampUtc));
+        Columns.Add(EscapeCsvField(Row.Kind));
+        Columns.Add(Row.bCacheHit ? TEXT("true") : TEXT("false"));
+        Columns.Add(EscapeCsvField(Row.RunLabel));
+        Columns.Add(EscapeCsvField(Row.ScenarioId));
+        Columns.Add(Row.IterationIndex >= 0 ? LexToString(Row.IterationIndex) : FString());
+        Columns.Add(EscapeCsvField(Row.ActionKind));
+        Columns.Add(EscapeCsvField(Row.RequestId));
+        Columns.Add(EscapeCsvField(Row.ActorName));
+        Columns.Add(EscapeCsvField(Row.TargetId));
+        Columns.Add(EscapeCsvField(Row.Result));
+        Columns.Add(FormatTimingCsvValue(Row.TotalToVisibleMs));
+        Columns.Add(FormatTimingCsvValue(Row.TotalToFinishMs));
+        Columns.Add(FormatTimingCsvValue(Row.ResponseWaitMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerTotalMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerResolveMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerInputsMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerEvalMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerExtractMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractGeometryAccessMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractBuildPartsMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractMeshPrepareMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractMeshReadMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractMeshExpandMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractTransformMs));
+        Columns.Add(FormatTimingCsvValue(Row.ExtractMergeMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerSerializeMs));
+        Columns.Add(FormatTimingCsvValue(Row.WorkerSharedWriteMs));
+        Columns.Add(FormatTimingCsvValue(Row.ReadDecodeMs));
+        Columns.Add(FormatTimingCsvValue(Row.PreviewApplyMs));
+        Columns.Add(FormatTimingCsvValue(Row.BakeExecuteMs));
+        Columns.Add(FormatTimingCsvValue(Row.OverheadMs));
+        const FString RowLine = FString::Join(Columns, TEXT(","));
+        const FString FileContents = bFileExists
+            ? FString::Printf(TEXT("%s%s"), *RowLine, LINE_TERMINATOR)
+            : FString::Printf(TEXT("%s%s%s%s"), *Header, LINE_TERMINATOR, *RowLine, LINE_TERMINATOR);
+
+        if (!FFileHelper::SaveStringToFile(
+                FileContents,
+                *FilePath,
+                FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+                &IFileManager::Get(),
+                FILEWRITE_Append))
+        {
+            UE_LOG(LogBlenderBridge, Warning, TEXT("Failed to append timing history to %s"), *FilePath);
+        }
+    }
 
     uint64 ComputeExpandedSharedMemoryBytes(const uint64 CurrentTotalBytes, const uint64 RequiredSlotBytes)
     {
@@ -918,6 +1173,10 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             return;
         }
 
+        const double ResponseReceivedSeconds = FPlatformTime::Seconds();
+        FBridgeWorkerTimingBreakdown WorkerTimings;
+        ParseWorkerTimingBreakdown(Message.Payload, WorkerTimings);
+
         double SlotNumber = 0.0;
         if (!Message.Payload.IsValid() || !Message.Payload->TryGetNumberField(TEXT("slot"), SlotNumber))
         {
@@ -925,6 +1184,7 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             return;
         }
 
+        const double ReadDecodeStartSeconds = FPlatformTime::Seconds();
         FBridgeDecodedMesh DecodedMesh;
         if (!Session->GetSharedMemory().ReadMesh(static_cast<uint32>(SlotNumber), DecodedMesh))
         {
@@ -933,15 +1193,86 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
         }
 
         BlenderBridge::ParseCookedMeshMetadata(Message.Payload, DecodedMesh.MaterialSlots, DecodedMesh.Sections);
+        const double ReadDecodeMs = (FPlatformTime::Seconds() - ReadDecodeStartSeconds) * 1000.0;
         if (!PendingRequest.CookCacheKey.IsEmpty())
         {
             FCookedTargetCache& CachedCook = CookedTargetCaches.FindOrAdd(PendingRequest.CookCacheKey);
             CachedCook.DecodedMesh = DecodedMesh;
         }
+
+        const double PreviewApplyStartSeconds = FPlatformTime::Seconds();
         Component->ApplyDecodedMesh(MoveTemp(DecodedMesh));
+        const double PreviewApplyMs = (FPlatformTime::Seconds() - PreviewApplyStartSeconds) * 1000.0;
+        const double ApplyFinishedSeconds = FPlatformTime::Seconds();
         Component->SetBridgeStatus(
             EBlenderBridgeComponentStatus::Cooked,
             FString::Printf(TEXT("Applied bridge mesh from slot %u"), static_cast<uint32>(SlotNumber)));
+
+        if (ShouldLogCookTimings() && PendingRequest.SentTimeSeconds > 0.0)
+        {
+            const double ResponseWaitMs = (ResponseReceivedSeconds - PendingRequest.SentTimeSeconds) * 1000.0;
+            const double TotalVisibleMs = (ApplyFinishedSeconds - PendingRequest.SentTimeSeconds) * 1000.0;
+            const double ApproxOverheadMs =
+                WorkerTimings.TotalMs >= 0.0
+                    ? FMath::Max(0.0, TotalVisibleMs - WorkerTimings.TotalMs - ReadDecodeMs - PreviewApplyMs)
+                    : -1.0;
+
+            UE_LOG(
+                LogBlenderBridge,
+                Log,
+                TEXT("[BlenderBridgeTiming] kind=cook req=%s actor=%s target=%s total_to_visible=%s response_wait=%s worker_total=%s worker_resolve=%s worker_inputs=%s worker_eval=%s worker_extract=%s extract_geometry_access=%s extract_build_parts=%s extract_mesh_prepare=%s extract_mesh_read=%s extract_mesh_expand=%s extract_transform=%s extract_merge=%s worker_shm_write=%s read_decode=%s preview_apply=%s overhead=%s"),
+                RequestId.IsEmpty() ? TEXT("n/a") : *RequestId,
+                *GetNameSafe(Component->GetOwner()),
+                *Component->TargetId,
+                *FormatTimingMs(TotalVisibleMs),
+                *FormatTimingMs(ResponseWaitMs),
+                *FormatTimingMs(WorkerTimings.TotalMs),
+                *FormatTimingMs(WorkerTimings.ResolveMs),
+                *FormatTimingMs(WorkerTimings.InputsMs),
+                *FormatTimingMs(WorkerTimings.EvalMs),
+                *FormatTimingMs(WorkerTimings.ExtractMs),
+                *FormatTimingMs(WorkerTimings.ExtractGeometryAccessMs),
+                *FormatTimingMs(WorkerTimings.ExtractBuildPartsMs),
+                *FormatTimingMs(WorkerTimings.ExtractMeshPrepareMs),
+                *FormatTimingMs(WorkerTimings.ExtractMeshReadMs),
+                *FormatTimingMs(WorkerTimings.ExtractMeshExpandMs),
+                *FormatTimingMs(WorkerTimings.ExtractTransformMs),
+                *FormatTimingMs(WorkerTimings.ExtractMergeMs),
+                *FormatTimingMs(WorkerTimings.SharedWriteMs),
+                *FormatTimingMs(ReadDecodeMs),
+                *FormatTimingMs(PreviewApplyMs),
+                *FormatTimingMs(ApproxOverheadMs));
+
+            FBridgeTimingHistoryRow HistoryRow;
+            HistoryRow.TimestampUtc = FDateTime::UtcNow().ToIso8601();
+            HistoryRow.Kind = TEXT("cook");
+            HistoryRow.RunLabel = PendingRequest.RunLabel;
+            HistoryRow.ScenarioId = PendingRequest.ScenarioId;
+            HistoryRow.IterationIndex = PendingRequest.IterationIndex;
+            HistoryRow.ActionKind = PendingRequest.ActionKind;
+            HistoryRow.RequestId = RequestId;
+            HistoryRow.ActorName = GetNameSafe(Component->GetOwner());
+            HistoryRow.TargetId = Component->TargetId;
+            HistoryRow.TotalToVisibleMs = TotalVisibleMs;
+            HistoryRow.ResponseWaitMs = ResponseWaitMs;
+            HistoryRow.WorkerTotalMs = WorkerTimings.TotalMs;
+            HistoryRow.WorkerResolveMs = WorkerTimings.ResolveMs;
+            HistoryRow.WorkerInputsMs = WorkerTimings.InputsMs;
+            HistoryRow.WorkerEvalMs = WorkerTimings.EvalMs;
+            HistoryRow.WorkerExtractMs = WorkerTimings.ExtractMs;
+            HistoryRow.ExtractGeometryAccessMs = WorkerTimings.ExtractGeometryAccessMs;
+            HistoryRow.ExtractBuildPartsMs = WorkerTimings.ExtractBuildPartsMs;
+            HistoryRow.ExtractMeshPrepareMs = WorkerTimings.ExtractMeshPrepareMs;
+            HistoryRow.ExtractMeshReadMs = WorkerTimings.ExtractMeshReadMs;
+            HistoryRow.ExtractMeshExpandMs = WorkerTimings.ExtractMeshExpandMs;
+            HistoryRow.ExtractTransformMs = WorkerTimings.ExtractTransformMs;
+            HistoryRow.ExtractMergeMs = WorkerTimings.ExtractMergeMs;
+            HistoryRow.WorkerSharedWriteMs = WorkerTimings.SharedWriteMs;
+            HistoryRow.ReadDecodeMs = ReadDecodeMs;
+            HistoryRow.PreviewApplyMs = PreviewApplyMs;
+            HistoryRow.OverheadMs = ApproxOverheadMs;
+            AppendTimingHistoryRow(HistoryRow);
+        }
         return;
     }
 
@@ -963,6 +1294,10 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             return;
         }
 
+        const double ResponseReceivedSeconds = FPlatformTime::Seconds();
+        FBridgeWorkerTimingBreakdown WorkerTimings;
+        ParseWorkerTimingBreakdown(Message.Payload, WorkerTimings);
+
         double SlotNumber = 0.0;
         if (!Message.Payload.IsValid() || !Message.Payload->TryGetNumberField(TEXT("slot"), SlotNumber))
         {
@@ -971,6 +1306,7 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             return;
         }
 
+        const double ReadDecodeStartSeconds = FPlatformTime::Seconds();
         FBridgeDecodedInstanceBake DecodedInstanceBake;
         if (!Session->GetInstanceBakeSharedMemory().ReadInstanceBake(static_cast<uint32>(SlotNumber), DecodedInstanceBake))
         {
@@ -978,6 +1314,7 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, TEXT("Failed to read instanced bake data from shared memory."));
             return;
         }
+        const double ReadDecodeMs = (FPlatformTime::Seconds() - ReadDecodeStartSeconds) * 1000.0;
 
         if (!PendingRequest.CookCacheKey.IsEmpty())
         {
@@ -985,7 +1322,82 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
             CachedCook.DecodedInstanceBake = DecodedInstanceBake;
         }
 
-        if (FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(Component))
+        const double BakeExecuteStartSeconds = FPlatformTime::Seconds();
+        const bool bBakeSucceeded = FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(Component);
+        const double BakeExecuteMs = (FPlatformTime::Seconds() - BakeExecuteStartSeconds) * 1000.0;
+        const double BakeFinishedSeconds = FPlatformTime::Seconds();
+
+        if (ShouldLogCookTimings() && PendingRequest.SentTimeSeconds > 0.0)
+        {
+            const double ResponseWaitMs = (ResponseReceivedSeconds - PendingRequest.SentTimeSeconds) * 1000.0;
+            const double TotalFinishedMs = (BakeFinishedSeconds - PendingRequest.SentTimeSeconds) * 1000.0;
+            const double ApproxOverheadMs =
+                WorkerTimings.TotalMs >= 0.0
+                    ? FMath::Max(0.0, TotalFinishedMs - WorkerTimings.TotalMs - ReadDecodeMs - BakeExecuteMs)
+                    : -1.0;
+
+            UE_LOG(
+                LogBlenderBridge,
+                Log,
+                TEXT("[BlenderBridgeTiming] kind=instance_bake req=%s actor=%s target=%s total_to_finish=%s response_wait=%s worker_total=%s worker_resolve=%s worker_inputs=%s worker_eval=%s worker_extract=%s extract_geometry_access=%s extract_build_parts=%s extract_mesh_prepare=%s extract_mesh_read=%s extract_mesh_expand=%s extract_transform=%s extract_merge=%s worker_serialize=%s worker_shm_write=%s read_decode=%s bake_execute=%s overhead=%s result=%s"),
+                RequestId.IsEmpty() ? TEXT("n/a") : *RequestId,
+                *GetNameSafe(Component->GetOwner()),
+                *Component->TargetId,
+                *FormatTimingMs(TotalFinishedMs),
+                *FormatTimingMs(ResponseWaitMs),
+                *FormatTimingMs(WorkerTimings.TotalMs),
+                *FormatTimingMs(WorkerTimings.ResolveMs),
+                *FormatTimingMs(WorkerTimings.InputsMs),
+                *FormatTimingMs(WorkerTimings.EvalMs),
+                *FormatTimingMs(WorkerTimings.ExtractMs),
+                *FormatTimingMs(WorkerTimings.ExtractGeometryAccessMs),
+                *FormatTimingMs(WorkerTimings.ExtractBuildPartsMs),
+                *FormatTimingMs(WorkerTimings.ExtractMeshPrepareMs),
+                *FormatTimingMs(WorkerTimings.ExtractMeshReadMs),
+                *FormatTimingMs(WorkerTimings.ExtractMeshExpandMs),
+                *FormatTimingMs(WorkerTimings.ExtractTransformMs),
+                *FormatTimingMs(WorkerTimings.ExtractMergeMs),
+                *FormatTimingMs(WorkerTimings.SerializeMs),
+                *FormatTimingMs(WorkerTimings.SharedWriteMs),
+                *FormatTimingMs(ReadDecodeMs),
+                *FormatTimingMs(BakeExecuteMs),
+                *FormatTimingMs(ApproxOverheadMs),
+                bBakeSucceeded ? TEXT("success") : TEXT("failure"));
+
+            FBridgeTimingHistoryRow HistoryRow;
+            HistoryRow.TimestampUtc = FDateTime::UtcNow().ToIso8601();
+            HistoryRow.Kind = TEXT("instance_bake");
+            HistoryRow.RunLabel = PendingRequest.RunLabel;
+            HistoryRow.ScenarioId = PendingRequest.ScenarioId;
+            HistoryRow.IterationIndex = PendingRequest.IterationIndex;
+            HistoryRow.ActionKind = PendingRequest.ActionKind;
+            HistoryRow.RequestId = RequestId;
+            HistoryRow.ActorName = GetNameSafe(Component->GetOwner());
+            HistoryRow.TargetId = Component->TargetId;
+            HistoryRow.Result = bBakeSucceeded ? TEXT("success") : TEXT("failure");
+            HistoryRow.TotalToFinishMs = TotalFinishedMs;
+            HistoryRow.ResponseWaitMs = ResponseWaitMs;
+            HistoryRow.WorkerTotalMs = WorkerTimings.TotalMs;
+            HistoryRow.WorkerResolveMs = WorkerTimings.ResolveMs;
+            HistoryRow.WorkerInputsMs = WorkerTimings.InputsMs;
+            HistoryRow.WorkerEvalMs = WorkerTimings.EvalMs;
+            HistoryRow.WorkerExtractMs = WorkerTimings.ExtractMs;
+            HistoryRow.ExtractGeometryAccessMs = WorkerTimings.ExtractGeometryAccessMs;
+            HistoryRow.ExtractBuildPartsMs = WorkerTimings.ExtractBuildPartsMs;
+            HistoryRow.ExtractMeshPrepareMs = WorkerTimings.ExtractMeshPrepareMs;
+            HistoryRow.ExtractMeshReadMs = WorkerTimings.ExtractMeshReadMs;
+            HistoryRow.ExtractMeshExpandMs = WorkerTimings.ExtractMeshExpandMs;
+            HistoryRow.ExtractTransformMs = WorkerTimings.ExtractTransformMs;
+            HistoryRow.ExtractMergeMs = WorkerTimings.ExtractMergeMs;
+            HistoryRow.WorkerSerializeMs = WorkerTimings.SerializeMs;
+            HistoryRow.WorkerSharedWriteMs = WorkerTimings.SharedWriteMs;
+            HistoryRow.ReadDecodeMs = ReadDecodeMs;
+            HistoryRow.BakeExecuteMs = BakeExecuteMs;
+            HistoryRow.OverheadMs = ApproxOverheadMs;
+            AppendTimingHistoryRow(HistoryRow);
+        }
+
+        if (bBakeSucceeded)
         {
             Component->bPendingInstancedBake = false;
             return;
@@ -1157,6 +1569,11 @@ bool FBlenderBridgeSessionManager::TryApplyCachedCook(UBlenderBridgeComponent* C
         return false;
     }
 
+    if (Component->ShouldBypassCookCacheForAutomation())
+    {
+        return false;
+    }
+
     FString CurveHash;
     if (Component->TargetCapabilities.bSupportsCurveOwner)
     {
@@ -1179,14 +1596,42 @@ bool FBlenderBridgeSessionManager::TryApplyCachedCook(UBlenderBridgeComponent* C
         return false;
     }
 
+    const double PreviewApplyStartSeconds = FPlatformTime::Seconds();
     FBridgeDecodedMesh CachedDecodedMesh = CachedCook->DecodedMesh;
     Component->ApplyDecodedMesh(MoveTemp(CachedDecodedMesh));
+    const double PreviewApplyMs = (FPlatformTime::Seconds() - PreviewApplyStartSeconds) * 1000.0;
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooked, TEXT("Applied cached bridge mesh."));
+
+    if (ShouldLogCookTimings())
+    {
+        UE_LOG(
+            LogBlenderBridge,
+            Log,
+            TEXT("[BlenderBridgeTiming] kind=cook cache_hit=true actor=%s target=%s preview_apply=%s"),
+            *GetNameSafe(Component->GetOwner()),
+            *Component->TargetId,
+            *FormatTimingMs(PreviewApplyMs));
+
+        FBridgeTimingHistoryRow HistoryRow;
+        HistoryRow.TimestampUtc = FDateTime::UtcNow().ToIso8601();
+        HistoryRow.Kind = TEXT("cook");
+        HistoryRow.bCacheHit = true;
+        PopulateTimingHistoryMetadataFromComponent(Component, HistoryRow);
+        HistoryRow.ActorName = GetNameSafe(Component->GetOwner());
+        HistoryRow.TargetId = Component->TargetId;
+        HistoryRow.PreviewApplyMs = PreviewApplyMs;
+        AppendTimingHistoryRow(HistoryRow);
+    }
     return true;
 }
 
 bool FBlenderBridgeSessionManager::TryApplyCachedInstanceBake(UBlenderBridgeComponent* Component)
 {
+    if (IsValid(Component) && Component->ShouldBypassCookCacheForAutomation())
+    {
+        return false;
+    }
+
     return FindCachedInstanceBake(Component) != nullptr;
 }
 
@@ -1572,7 +2017,12 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
     PendingRequest.Component = Component;
     PendingRequest.SourceHandle = SourceHandle;
     PendingRequest.TargetId = Component->TargetId;
+    PendingRequest.RunLabel = Component->GetAutomationRunLabel();
+    PendingRequest.ScenarioId = Component->GetAutomationScenarioId();
+    PendingRequest.ActionKind = Component->GetAutomationActionKind();
+    PendingRequest.IterationIndex = Component->GetAutomationIterationIndex();
     BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, PendingRequest.CookCacheKey);
+    PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooking, TEXT("Cooking selected target."));
@@ -1612,7 +2062,34 @@ bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeCompone
 
     if (TryApplyCachedInstanceBake(Component))
     {
-        if (FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(Component))
+        const double BakeExecuteStartSeconds = FPlatformTime::Seconds();
+        const bool bBakeSucceeded = FBlenderBridgeRuntimeModule::Get().ExecuteBakeBridgeComponent(Component);
+        const double BakeExecuteMs = (FPlatformTime::Seconds() - BakeExecuteStartSeconds) * 1000.0;
+
+        if (ShouldLogCookTimings())
+        {
+            UE_LOG(
+                LogBlenderBridge,
+                Log,
+                TEXT("[BlenderBridgeTiming] kind=instance_bake cache_hit=true actor=%s target=%s bake_execute=%s result=%s"),
+                *GetNameSafe(Component->GetOwner()),
+                *Component->TargetId,
+                *FormatTimingMs(BakeExecuteMs),
+                bBakeSucceeded ? TEXT("success") : TEXT("failure"));
+
+            FBridgeTimingHistoryRow HistoryRow;
+            HistoryRow.TimestampUtc = FDateTime::UtcNow().ToIso8601();
+            HistoryRow.Kind = TEXT("instance_bake");
+            HistoryRow.bCacheHit = true;
+            PopulateTimingHistoryMetadataFromComponent(Component, HistoryRow);
+            HistoryRow.ActorName = GetNameSafe(Component->GetOwner());
+            HistoryRow.TargetId = Component->TargetId;
+            HistoryRow.Result = bBakeSucceeded ? TEXT("success") : TEXT("failure");
+            HistoryRow.BakeExecuteMs = BakeExecuteMs;
+            AppendTimingHistoryRow(HistoryRow);
+        }
+
+        if (bBakeSucceeded)
         {
             Component->bPendingInstancedBake = false;
             return true;
@@ -1659,7 +2136,12 @@ bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeCompone
     PendingRequest.Component = Component;
     PendingRequest.SourceHandle = SourceHandle;
     PendingRequest.TargetId = Component->TargetId;
+    PendingRequest.RunLabel = Component->GetAutomationRunLabel();
+    PendingRequest.ScenarioId = Component->GetAutomationScenarioId();
+    PendingRequest.ActionKind = Component->GetAutomationActionKind();
+    PendingRequest.IterationIndex = Component->GetAutomationIterationIndex();
     BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, PendingRequest.CookCacheKey);
+    PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooking, TEXT("Preparing instanced bake payload."));

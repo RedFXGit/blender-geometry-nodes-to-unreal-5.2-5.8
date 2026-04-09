@@ -81,6 +81,21 @@ public:
     UBlenderBridgeComponent();
 
     void AssignSourceFromActorFactory(UBlenderBridgeSource* InSource);
+    void SetAutomationRequestContext(
+        const FString& InRunLabel,
+        const FString& InScenarioId,
+        int32 InIterationIndex,
+        const FString& InActionKind,
+        bool bInBypassCookCache = true,
+        bool bInUseAutomationScratchBakeRoot = false);
+    void ClearAutomationRequestContext();
+    bool HasAutomationTimingContext() const;
+    bool ShouldBypassCookCacheForAutomation() const;
+    bool ShouldUseAutomationScratchBakeRoot() const;
+    const FString& GetAutomationRunLabel() const { return AutomationRunLabel; }
+    const FString& GetAutomationScenarioId() const { return AutomationScenarioId; }
+    const FString& GetAutomationActionKind() const { return AutomationActionKind; }
+    int32 GetAutomationIterationIndex() const { return AutomationIterationIndex; }
 
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Blender Bridge")
     void RefreshInputSchema();
@@ -234,6 +249,12 @@ private:
     FBridgeDecodedMesh LastCookedMesh;
     FString ImportedCurveTargetId;
     FString ImportedCurveHash;
+    FString AutomationRunLabel;
+    FString AutomationScenarioId;
+    FString AutomationActionKind;
+    int32 AutomationIterationIndex = INDEX_NONE;
+    bool bAutomationBypassCookCache = false;
+    bool bUseAutomationScratchBakeRoot = false;
     bool bHasValidCookedMesh = false;
     bool bPendingBakeAfterCook = false;
     bool bPendingInstancedBake = false;

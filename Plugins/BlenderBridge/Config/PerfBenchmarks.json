@@ -1,0 +1,48 @@
+{
+  "scenarios": [
+    {
+      "id": "house_preview",
+      "display_name": "HousePreview",
+      "blend_file": "GeometryNodesFrenchHous.blend",
+      "target_id": "HouseOne|Geometry Nodes",
+      "action": "request_cook",
+      "warmup_count": 1,
+      "measure_count": 5,
+      "requires_bake_cleanup": false,
+      "use_automation_scratch_bake_root": false
+    },
+    {
+      "id": "curve_preview",
+      "display_name": "CurvePreview",
+      "blend_file": "Curve.blend",
+      "target_id": "Blenderesse_ElectricLineGenerator_V01|GeometryNodes",
+      "action": "request_cook",
+      "warmup_count": 1,
+      "measure_count": 5,
+      "requires_bake_cleanup": false,
+      "use_automation_scratch_bake_root": false
+    },
+    {
+      "id": "instances_preview",
+      "display_name": "InstancesPreview",
+      "blend_file": "Instances.blend",
+      "target_id": "BezierCurve|GeometryNodes",
+      "action": "request_cook",
+      "warmup_count": 1,
+      "measure_count": 5,
+      "requires_bake_cleanup": false,
+      "use_automation_scratch_bake_root": false
+    },
+    {
+      "id": "instances_bake",
+      "display_name": "InstancesBake",
+      "blend_file": "Instances.blend",
+      "target_id": "BezierCurve|GeometryNodes",
+      "action": "instanced_bake",
+      "warmup_count": 1,
+      "measure_count": 3,
+      "requires_bake_cleanup": true,
+      "use_automation_scratch_bake_root": true
+    }
+  ]
+}

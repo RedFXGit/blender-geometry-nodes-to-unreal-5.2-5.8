@@ -47,4 +47,34 @@ public:
             ToolTip = "Content root where baked Blender Bridge outputs, shared prototype meshes, and generated materials will be written."
         ))
     FString BakeRootContentPath = TEXT("/Game/BlenderBridge/Baked");
+
+    UPROPERTY(
+        EditAnywhere,
+        Config,
+        Category = "Automation",
+        meta = (
+            DisplayName = "Automation Fixture Root Directory",
+            ToolTip = "Root folder for local Blender fixture files consumed by the automated performance loop."
+        ))
+    FDirectoryPath AutomationFixtureRootDirectory = { TEXT("C:/Users/Lassiter/Downloads/Blender_Geo") };
+
+    UPROPERTY(
+        EditAnywhere,
+        Config,
+        Category = "Automation",
+        meta = (
+            DisplayName = "Automation Perf Scratch Bake Root",
+            ToolTip = "Content root reserved for automated performance bake runs so the loop does not pollute normal baked output content."
+        ))
+    FString AutomationPerfScratchBakeRoot = TEXT("/Game/BlenderBridge/PerfScratch");
+
+    UPROPERTY(
+        EditAnywhere,
+        Config,
+        Category = "Diagnostics",
+        meta = (
+            DisplayName = "Timing History Output Directory",
+            ToolTip = "Directory where Blender Bridge appends the timing history CSV when blenderbridge.LogCookTimings is enabled. Leave empty to write to the Unreal project root."
+        ))
+    FDirectoryPath TimingHistoryOutputDirectory;
 };

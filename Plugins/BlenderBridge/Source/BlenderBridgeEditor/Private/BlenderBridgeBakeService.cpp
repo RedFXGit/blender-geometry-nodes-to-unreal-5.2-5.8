@@ -124,10 +124,23 @@ namespace
             : TEXT("Target");
     }
 
-    FString BuildBakeFolderPath(const UBlenderBridgeComponent* Component)
+    FString GetEffectiveBakeRootPath(const UBlenderBridgeComponent* Component)
     {
         const UBlenderBridgeSettings* Settings = GetDefault<UBlenderBridgeSettings>();
-        const FString RootPath = NormalizeBakeRootPath(Settings != nullptr ? Settings->BakeRootContentPath : FString());
+        if (Component != nullptr
+            && Component->ShouldUseAutomationScratchBakeRoot()
+            && Settings != nullptr
+            && !Settings->AutomationPerfScratchBakeRoot.IsEmpty())
+        {
+            return NormalizeBakeRootPath(Settings->AutomationPerfScratchBakeRoot);
+        }
+
+        return NormalizeBakeRootPath(Settings != nullptr ? Settings->BakeRootContentPath : FString());
+    }
+
+    FString BuildBakeFolderPath(const UBlenderBridgeComponent* Component)
+    {
+        const FString RootPath = GetEffectiveBakeRootPath(Component);
         return FString::Printf(
             TEXT("%s/%s/%s/%s"),
             *RootPath,
@@ -150,8 +163,7 @@ namespace
 
     FString BuildSharedPrototypeFolderPath(const UBlenderBridgeComponent* Component)
     {
-        const UBlenderBridgeSettings* Settings = GetDefault<UBlenderBridgeSettings>();
-        const FString RootPath = NormalizeBakeRootPath(Settings != nullptr ? Settings->BakeRootContentPath : FString());
+        const FString RootPath = GetEffectiveBakeRootPath(Component);
         const FString SourceScopeKey = BuildSourceScopeKey(Component);
         if (SourceScopeKey.IsEmpty())
         {

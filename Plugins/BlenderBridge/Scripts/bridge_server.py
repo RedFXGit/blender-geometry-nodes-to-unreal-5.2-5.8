@@ -7,6 +7,7 @@ import math
 import mmap
 import os
 import sys
+import time
 
 try:
     import numpy as np
@@ -204,6 +205,23 @@ def convert_curve_vector_from_unreal(value) -> object:
             components[2] / 100.0,
         )
     )
+
+
+def elapsed_ms(start_time: float, end_time: float | None = None) -> float:
+    final_time = time.perf_counter() if end_time is None else end_time
+    return (final_time - start_time) * 1000.0
+
+
+def make_extract_timing_breakdown() -> dict[str, float]:
+    return {
+        "geometry_access_ms": 0.0,
+        "build_parts_ms": 0.0,
+        "mesh_prepare_ms": 0.0,
+        "mesh_read_ms": 0.0,
+        "mesh_expand_ms": 0.0,
+        "transform_ms": 0.0,
+        "merge_ms": 0.0,
+    }
 
 
 class BridgeMeshSlotHeader(ctypes.Structure):
@@ -1131,15 +1149,20 @@ class BridgeWorker:
 
         return material_slots
 
-    def extract_local_render_buffers_for_mesh(self, mesh):
+    def extract_local_render_buffers_for_mesh(self, mesh, extract_timings: dict[str, float] | None = None):
+        prepare_start_time = time.perf_counter()
         mesh.calc_loop_triangles()
         if hasattr(mesh, "calc_normals_split"):
             mesh.calc_normals_split()
+        prepare_end_time = time.perf_counter()
+        if extract_timings is not None:
+            extract_timings["mesh_prepare_ms"] += elapsed_ms(prepare_start_time, prepare_end_time)
 
         triangle_count = len(mesh.loop_triangles)
         if triangle_count == 0:
             return None
 
+        read_start_time = time.perf_counter()
         vertex_coords = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
         mesh.vertices.foreach_get("co", vertex_coords)
         vertex_coords = vertex_coords.reshape(-1, 3)
@@ -1161,7 +1184,6 @@ class BridgeWorker:
             triangle_material_indices = np.clip(triangle_material_indices, 0, len(material_slots) - 1)
 
         positions = vertex_coords[triangle_vertex_indices].astype(np.float32, copy=True)
-
         try:
             loop_normals = np.empty(len(mesh.loops) * 3, dtype=np.float32)
             mesh.loops.foreach_get("normal", loop_normals)
@@ -1181,10 +1203,18 @@ class BridgeWorker:
         else:
             uv0 = np.zeros((triangle_count, 3, 2), dtype=np.float32)
 
+        read_end_time = time.perf_counter()
+        if extract_timings is not None:
+            extract_timings["mesh_read_ms"] += elapsed_ms(read_start_time, read_end_time)
+
+        expand_start_time = time.perf_counter()
         render_vertex_count = triangle_count * 3
         packed_positions = np.ascontiguousarray(positions.reshape(render_vertex_count, 3), dtype=np.float32)
         packed_normals = np.ascontiguousarray(normals.reshape(render_vertex_count, 3), dtype=np.float32)
         packed_uv0 = np.ascontiguousarray(uv0.reshape(render_vertex_count, 2), dtype=np.float32)
+        expand_end_time = time.perf_counter()
+        if extract_timings is not None:
+            extract_timings["mesh_expand_ms"] += elapsed_ms(expand_start_time, expand_end_time)
         return (
             packed_positions,
             packed_normals,
@@ -1221,7 +1251,14 @@ class BridgeWorker:
             np.ascontiguousarray(transformed_uv0, dtype=np.float32),
         )
 
-    def transform_render_part(self, render_part, transform_matrix, convert_to_unreal: bool):
+    def transform_render_part(
+        self,
+        render_part,
+        transform_matrix,
+        convert_to_unreal: bool,
+        extract_timings: dict[str, float] | None = None,
+    ):
+        transform_start_time = time.perf_counter()
         transformed_positions, transformed_normals, transformed_uv0 = self.transform_render_buffers(
             render_part[0],
             render_part[1],
@@ -1229,6 +1266,8 @@ class BridgeWorker:
             transform_matrix,
             convert_to_unreal,
         )
+        if extract_timings is not None:
+            extract_timings["transform_ms"] += elapsed_ms(transform_start_time)
         return (
             transformed_positions,
             transformed_normals,
@@ -1701,7 +1740,14 @@ class BridgeWorker:
 
         return bytes(payload_bytes)
 
-    def build_local_render_parts_from_reference(self, reference, depsgraph, reference_cache: dict, recursion_depth: int):
+    def build_local_render_parts_from_reference(
+        self,
+        reference,
+        depsgraph,
+        reference_cache: dict,
+        recursion_depth: int,
+        extract_timings: dict[str, float] | None = None,
+    ):
         cache_key = self.get_cache_key(reference)
         if cache_key is not None and cache_key in reference_cache:
             return reference_cache[cache_key]
@@ -1718,6 +1764,7 @@ class BridgeWorker:
                             depsgraph,
                             reference_cache,
                             recursion_depth,
+                            extract_timings,
                         )
                     else:
                         evaluated_mesh = evaluated_reference.to_mesh(
@@ -1726,7 +1773,7 @@ class BridgeWorker:
                         )
                         if evaluated_mesh is not None:
                             try:
-                                extracted_buffers = self.extract_local_render_buffers_for_mesh(evaluated_mesh)
+                                extracted_buffers = self.extract_local_render_buffers_for_mesh(evaluated_mesh, extract_timings)
                                 if extracted_buffers is not None:
                                     render_parts = [extracted_buffers]
                             finally:
@@ -1737,20 +1784,28 @@ class BridgeWorker:
                     depsgraph,
                     reference_cache,
                     recursion_depth,
+                    extract_timings,
                 )
 
         if cache_key is not None:
             reference_cache[cache_key] = render_parts
         return render_parts
 
-    def build_local_render_parts_from_geometry(self, geometry, depsgraph, reference_cache: dict, recursion_depth: int):
+    def build_local_render_parts_from_geometry(
+        self,
+        geometry,
+        depsgraph,
+        reference_cache: dict,
+        recursion_depth: int,
+        extract_timings: dict[str, float] | None = None,
+    ):
         if recursion_depth > MAX_GEOMETRYSET_RECURSION_DEPTH:
             raise RuntimeError("Geometry Nodes instance recursion exceeded the supported depth")
 
         render_parts = []
         mesh = getattr(geometry, "mesh", None)
         if mesh is not None:
-            extracted_buffers = self.extract_local_render_buffers_for_mesh(mesh)
+            extracted_buffers = self.extract_local_render_buffers_for_mesh(mesh, extract_timings)
             if extracted_buffers is not None:
                 render_parts.append(extracted_buffers)
 
@@ -1784,17 +1839,28 @@ class BridgeWorker:
                 depsgraph,
                 reference_cache,
                 recursion_depth + 1,
+                extract_timings,
             )
             for reference_part in reference_parts:
-                render_parts.append(self.transform_render_part(reference_part, instance_transform, convert_to_unreal=False))
+                render_parts.append(
+                    self.transform_render_part(
+                        reference_part,
+                        instance_transform,
+                        convert_to_unreal=False,
+                        extract_timings=extract_timings,
+                    )
+                )
 
         return render_parts
 
     def extract_render_buffers_for_geometry_nodes_target(self, target_object, depsgraph):
+        extract_timings = make_extract_timing_breakdown()
+
+        geometry_access_start_time = time.perf_counter()
         evaluated_object = target_object.evaluated_get(depsgraph)
         geometry_getter = getattr(evaluated_object, "evaluated_geometry", None)
         if not callable(geometry_getter):
-            return None, None
+            return None, None, extract_timings
 
         geometry = geometry_getter()
         instance_count = 0
@@ -1804,41 +1870,66 @@ class BridgeWorker:
                 instance_count = len(instances_pointcloud.points)
         except AttributeError:
             instance_count = 0
+        geometry_access_end_time = time.perf_counter()
+        extract_timings["geometry_access_ms"] += elapsed_ms(geometry_access_start_time, geometry_access_end_time)
 
-        local_render_parts = self.build_local_render_parts_from_geometry(geometry, depsgraph, {}, 0)
+        build_parts_start_time = time.perf_counter()
+        local_render_parts = self.build_local_render_parts_from_geometry(geometry, depsgraph, {}, 0, extract_timings)
+        build_parts_end_time = time.perf_counter()
+        extract_timings["build_parts_ms"] += elapsed_ms(build_parts_start_time, build_parts_end_time)
         if not local_render_parts:
-            return None, None
+            return None, None, extract_timings
 
         world_matrix = target_object.matrix_world.copy()
-        world_render_parts = [self.transform_render_part(render_part, world_matrix, convert_to_unreal=True) for render_part in local_render_parts]
+        world_render_parts = [
+            self.transform_render_part(
+                render_part,
+                world_matrix,
+                convert_to_unreal=True,
+                extract_timings=extract_timings,
+            )
+            for render_part in local_render_parts
+        ]
+        merge_start_time = time.perf_counter()
         merged_buffers = self.merge_render_parts(world_render_parts)
+        merge_end_time = time.perf_counter()
+        extract_timings["merge_ms"] += elapsed_ms(merge_start_time, merge_end_time)
         if merged_buffers is None:
-            return None, None
+            return None, None, extract_timings
 
         cooked_target_label = target_object.name
         if instance_count > 0:
             cooked_target_label = f"{target_object.name} ({instance_count} GN instances)"
 
-        return merged_buffers, cooked_target_label
+        return merged_buffers, cooked_target_label, extract_timings
 
     def extract_render_buffers_for_object(self, target_object, depsgraph):
+        extract_timings = make_extract_timing_breakdown()
+        geometry_access_start_time = time.perf_counter()
         evaluated_object = target_object.evaluated_get(depsgraph)
         evaluated_mesh = evaluated_object.to_mesh(preserve_all_data_layers=True, depsgraph=depsgraph)
+        geometry_access_end_time = time.perf_counter()
+        extract_timings["geometry_access_ms"] += elapsed_ms(geometry_access_start_time, geometry_access_end_time)
 
         if evaluated_mesh is None:
             raise RuntimeError(f"Failed to evaluate Blender object '{target_object.name}' into a mesh")
 
         try:
-            extracted_buffers = self.extract_local_render_buffers_for_mesh(evaluated_mesh)
+            extracted_buffers = self.extract_local_render_buffers_for_mesh(evaluated_mesh, extract_timings)
             if extracted_buffers is None:
-                return None
+                return None, extract_timings
 
             transformed_part = self.transform_render_part(
                 extracted_buffers,
                 evaluated_object.matrix_world.copy(),
                 convert_to_unreal=True,
+                extract_timings=extract_timings,
             )
-            return self.merge_render_parts([transformed_part])
+            merge_start_time = time.perf_counter()
+            merged_buffers = self.merge_render_parts([transformed_part])
+            merge_end_time = time.perf_counter()
+            extract_timings["merge_ms"] += elapsed_ms(merge_start_time, merge_end_time)
+            return merged_buffers, extract_timings
         finally:
             evaluated_object.to_mesh_clear()
 
@@ -1964,6 +2055,7 @@ class BridgeWorker:
         if bpy is None:
             raise RuntimeError("Real mesh cooking requires Blender's bpy module")
 
+        total_start_time = time.perf_counter()
         request_id = str(payload.get("request_id") or "")
         source_handle = str(payload.get("source_handle") or "").strip()
         target_id = str(payload.get("target_id") or "").strip()
@@ -1975,6 +2067,7 @@ class BridgeWorker:
         if not isinstance(curve_payload, dict):
             curve_payload = {}
 
+        resolve_start_time = time.perf_counter()
         source_state, target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
         capabilities = self.build_target_capabilities(target_object, modifier)
         if bool(capabilities.get("supports_curve_owner", False)):
@@ -1984,21 +2077,34 @@ class BridgeWorker:
                 target_object,
                 component_handle,
             )
-            self.apply_curve_owner_payload(working_object, curve_payload)
-            self.apply_geometry_nodes_inputs(working_object, working_modifier, values)
             target_object = working_object
             modifier = working_modifier
+        resolve_end_time = time.perf_counter()
+
+        inputs_start_time = time.perf_counter()
+        if bool(capabilities.get("supports_curve_owner", False)):
+            self.apply_curve_owner_payload(target_object, curve_payload)
+            self.apply_geometry_nodes_inputs(target_object, modifier, values)
         else:
             self.apply_geometry_nodes_inputs(target_object, modifier, values)
+        inputs_end_time = time.perf_counter()
 
+        eval_start_time = time.perf_counter()
         bpy.context.view_layer.update()
         depsgraph = bpy.context.evaluated_depsgraph_get()
-        extracted_buffers, cooked_target_label = self.extract_render_buffers_for_geometry_nodes_target(target_object, depsgraph)
+        eval_end_time = time.perf_counter()
+
+        extract_start_time = time.perf_counter()
+        extracted_buffers, cooked_target_label, extract_timings = self.extract_render_buffers_for_geometry_nodes_target(
+            target_object,
+            depsgraph,
+        )
         if extracted_buffers is None:
-            extracted_buffers = self.extract_render_buffers_for_object(target_object, depsgraph)
+            extracted_buffers, extract_timings = self.extract_render_buffers_for_object(target_object, depsgraph)
             cooked_target_label = str(target_descriptor["object_name"])
         else:
             cooked_target_label = str(target_descriptor["object_name"])
+        extract_end_time = time.perf_counter()
 
         if extracted_buffers is None or extracted_buffers[0].size == 0:
             raise RuntimeError(f"Target '{target_id}' did not produce any triangles")
@@ -2010,6 +2116,7 @@ class BridgeWorker:
         material_slots = extracted_buffers[4]
         section_descriptors = extracted_buffers[5]
 
+        shared_write_start_time = time.perf_counter()
         slot_index = self.write_mesh_to_shared_memory(
             merged_positions,
             merged_normals,
@@ -2019,9 +2126,11 @@ class BridgeWorker:
             source_handle=source_handle,
             target_id=target_id,
         )
+        shared_write_end_time = time.perf_counter()
         if slot_index is None:
             return
 
+        total_end_time = time.perf_counter()
         self.send_for_request(
             "CookComplete",
             request_id=request_id,
@@ -2035,12 +2144,26 @@ class BridgeWorker:
             object_count=1,
             material_slots=material_slots,
             sections=section_descriptors,
+            timing_worker_total_ms=elapsed_ms(total_start_time, total_end_time),
+            timing_worker_resolve_ms=elapsed_ms(resolve_start_time, resolve_end_time),
+            timing_worker_inputs_ms=elapsed_ms(inputs_start_time, inputs_end_time),
+            timing_worker_eval_ms=elapsed_ms(eval_start_time, eval_end_time),
+            timing_worker_extract_ms=elapsed_ms(extract_start_time, extract_end_time),
+            timing_worker_extract_geometry_access_ms=float(extract_timings["geometry_access_ms"]),
+            timing_worker_extract_build_parts_ms=float(extract_timings["build_parts_ms"]),
+            timing_worker_extract_mesh_prepare_ms=float(extract_timings["mesh_prepare_ms"]),
+            timing_worker_extract_mesh_read_ms=float(extract_timings["mesh_read_ms"]),
+            timing_worker_extract_mesh_expand_ms=float(extract_timings["mesh_expand_ms"]),
+            timing_worker_extract_transform_ms=float(extract_timings["transform_ms"]),
+            timing_worker_extract_merge_ms=float(extract_timings["merge_ms"]),
+            timing_worker_shared_write_ms=elapsed_ms(shared_write_start_time, shared_write_end_time),
         )
 
     def request_instance_bake(self, payload: dict) -> None:
         if bpy is None:
             raise RuntimeError("Instance bake requests require Blender's bpy module")
 
+        total_start_time = time.perf_counter()
         request_id = str(payload.get("request_id") or "")
         source_handle = str(payload.get("source_handle") or "").strip()
         target_id = str(payload.get("target_id") or "").strip()
@@ -2052,6 +2175,7 @@ class BridgeWorker:
         if not isinstance(curve_payload, dict):
             curve_payload = {}
 
+        resolve_start_time = time.perf_counter()
         source_state, target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
         capabilities = self.build_target_capabilities(target_object, modifier)
         if bool(capabilities.get("supports_curve_owner", False)):
@@ -2061,20 +2185,33 @@ class BridgeWorker:
                 target_object,
                 component_handle,
             )
-            self.apply_curve_owner_payload(working_object, curve_payload)
-            self.apply_geometry_nodes_inputs(working_object, working_modifier, values)
             target_object = working_object
             modifier = working_modifier
+        resolve_end_time = time.perf_counter()
+
+        inputs_start_time = time.perf_counter()
+        if bool(capabilities.get("supports_curve_owner", False)):
+            self.apply_curve_owner_payload(target_object, curve_payload)
+            self.apply_geometry_nodes_inputs(target_object, modifier, values)
         else:
             self.apply_geometry_nodes_inputs(target_object, modifier, values)
+        inputs_end_time = time.perf_counter()
 
+        eval_start_time = time.perf_counter()
         bpy.context.view_layer.update()
         depsgraph = bpy.context.evaluated_depsgraph_get()
+        eval_end_time = time.perf_counter()
+
+        extract_start_time = time.perf_counter()
         instance_bake_payload, baked_target_label = self.build_instance_bake_payload_for_target(target_object, depsgraph)
+        extract_end_time = time.perf_counter()
         if instance_bake_payload is None:
             raise RuntimeError(f"Target '{target_id}' did not produce recoverable instances for instanced bake")
 
+        serialize_start_time = time.perf_counter()
         serialized_payload = self.serialize_instance_bake_payload(instance_bake_payload)
+        serialize_end_time = time.perf_counter()
+        shared_write_start_time = time.perf_counter()
         slot_index = self.write_instance_bake_to_shared_memory(
             serialized_payload,
             prototype_count=len(instance_bake_payload["prototypes"]),
@@ -2084,9 +2221,11 @@ class BridgeWorker:
             source_handle=source_handle,
             target_id=target_id,
         )
+        shared_write_end_time = time.perf_counter()
         if slot_index is None:
             return
 
+        total_end_time = time.perf_counter()
         self.send_for_request(
             "InstanceBakeComplete",
             request_id=request_id,
@@ -2098,6 +2237,13 @@ class BridgeWorker:
             instance_count=len(instance_bake_payload["placements"]),
             true_instance_count=int(instance_bake_payload["true_instance_count"]),
             object_name=str(baked_target_label or target_descriptor["object_name"]),
+            timing_worker_total_ms=elapsed_ms(total_start_time, total_end_time),
+            timing_worker_resolve_ms=elapsed_ms(resolve_start_time, resolve_end_time),
+            timing_worker_inputs_ms=elapsed_ms(inputs_start_time, inputs_end_time),
+            timing_worker_eval_ms=elapsed_ms(eval_start_time, eval_end_time),
+            timing_worker_extract_ms=elapsed_ms(extract_start_time, extract_end_time),
+            timing_worker_serialize_ms=elapsed_ms(serialize_start_time, serialize_end_time),
+            timing_worker_shared_write_ms=elapsed_ms(shared_write_start_time, shared_write_end_time),
         )
 
     def handle_message(self, message: dict) -> bool:

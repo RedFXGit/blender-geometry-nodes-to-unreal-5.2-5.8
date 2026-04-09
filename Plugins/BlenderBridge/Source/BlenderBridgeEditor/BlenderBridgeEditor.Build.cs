@@ -23,6 +23,8 @@ public class BlenderBridgeEditor : ModuleRules
                 "AssetTools",
                 "AssetDefinition",
                 "BlenderBridgeRuntime",
+                "Json",
+                "JsonUtilities",
                 "MaterialEditor",
                 "MeshDescription",
                 "MeshConversion",

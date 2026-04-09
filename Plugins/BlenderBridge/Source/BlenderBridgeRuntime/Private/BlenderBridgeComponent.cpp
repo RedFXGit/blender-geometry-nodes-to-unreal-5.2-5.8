@@ -214,6 +214,50 @@ void UBlenderBridgeComponent::AssignSourceFromActorFactory(UBlenderBridgeSource*
     bSuppressPostEditNotifications = bPreviousSuppressPostEditNotifications;
 }
 
+void UBlenderBridgeComponent::SetAutomationRequestContext(
+    const FString& InRunLabel,
+    const FString& InScenarioId,
+    const int32 InIterationIndex,
+    const FString& InActionKind,
+    const bool bInBypassCookCache,
+    const bool bInUseAutomationScratchBakeRoot)
+{
+    AutomationRunLabel = InRunLabel;
+    AutomationScenarioId = InScenarioId;
+    AutomationIterationIndex = InIterationIndex;
+    AutomationActionKind = InActionKind;
+    bAutomationBypassCookCache = bInBypassCookCache;
+    bUseAutomationScratchBakeRoot = bInUseAutomationScratchBakeRoot;
+}
+
+void UBlenderBridgeComponent::ClearAutomationRequestContext()
+{
+    AutomationRunLabel.Reset();
+    AutomationScenarioId.Reset();
+    AutomationActionKind.Reset();
+    AutomationIterationIndex = INDEX_NONE;
+    bAutomationBypassCookCache = false;
+    bUseAutomationScratchBakeRoot = false;
+}
+
+bool UBlenderBridgeComponent::HasAutomationTimingContext() const
+{
+    return !AutomationRunLabel.IsEmpty()
+        && !AutomationScenarioId.IsEmpty()
+        && !AutomationActionKind.IsEmpty()
+        && AutomationIterationIndex >= 0;
+}
+
+bool UBlenderBridgeComponent::ShouldBypassCookCacheForAutomation() const
+{
+    return bAutomationBypassCookCache;
+}
+
+bool UBlenderBridgeComponent::ShouldUseAutomationScratchBakeRoot() const
+{
+    return bUseAutomationScratchBakeRoot;
+}
+
 void UBlenderBridgeComponent::OnRegister()
 {
     Super::OnRegister();

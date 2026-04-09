@@ -66,6 +66,11 @@ private:
         FString SourceHandle;
         FString TargetId;
         FString CookCacheKey;
+        double SentTimeSeconds = 0.0;
+        FString RunLabel;
+        FString ScenarioId;
+        FString ActionKind;
+        int32 IterationIndex = INDEX_NONE;
         bool bForceReload = false;
         bool bRequestCookAfterDescribe = false;
         bool bRequestInstanceBakeAfterDescribe = false;
