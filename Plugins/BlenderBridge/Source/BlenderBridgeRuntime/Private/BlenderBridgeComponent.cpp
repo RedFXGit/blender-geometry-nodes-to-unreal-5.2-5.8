@@ -161,6 +161,30 @@ namespace
         return BagPropertyName.IsEmpty() ? TEXT("BridgeInputEnum") : FString::Printf(TEXT("BridgeInputEnum_%s"), *BagPropertyName);
     }
 
+    FString ComputeBridgeEnumObjectKey(const FBridgeInputSchema& Entry)
+    {
+        FString Serialized = Entry.Id.ToString();
+        Serialized += TEXT("|");
+        Serialized += FString::FromInt(Entry.DefaultEnumValue);
+
+        for (const FBridgeEnumOption& Option : Entry.EnumOptions)
+        {
+            Serialized += TEXT("|");
+            Serialized += Option.Id;
+            Serialized += TEXT("|");
+            Serialized += Option.Label;
+            Serialized += TEXT("|");
+            Serialized += FString::FromInt(Option.Value);
+        }
+
+        return FMD5::HashAnsiString(*Serialized);
+    }
+
+    FString MakeBridgeEnumObjectName(const FBridgeInputSchema& Entry)
+    {
+        return FString::Printf(TEXT("%s_%s"), *MakeBridgeEnumObjectBaseName(Entry), *ComputeBridgeEnumObjectKey(Entry));
+    }
+
     FString MakeBridgeEnumEntryShortName(const FBridgeEnumOption& Option, const int32 Index)
     {
         FString CandidateName = !Option.Id.IsEmpty() ? Option.Id : Option.Label;
@@ -761,9 +785,17 @@ UUserDefinedEnum* UBlenderBridgeComponent::GetOrCreateRuntimeEnum(const FBridgeI
         }
     }
 
+    const FString RuntimeEnumObjectName = MakeBridgeEnumObjectName(Entry);
+    if (UUserDefinedEnum* ExistingGlobalEnum = FindObject<UUserDefinedEnum>(GetTransientPackage(), *RuntimeEnumObjectName))
+    {
+        RuntimeInputEnums.Add(Entry.Id, ExistingGlobalEnum);
+        RuntimeInputEnumHashes.Add(Entry.Id, Signature);
+        return ExistingGlobalEnum;
+    }
+
     UUserDefinedEnum* RuntimeEnum = NewObject<UUserDefinedEnum>(
-        this,
-        MakeUniqueObjectName(this, UUserDefinedEnum::StaticClass(), *MakeBridgeEnumObjectBaseName(Entry)),
+        GetTransientPackage(),
+        *RuntimeEnumObjectName,
         RF_Transient);
     if (RuntimeEnum == nullptr)
     {

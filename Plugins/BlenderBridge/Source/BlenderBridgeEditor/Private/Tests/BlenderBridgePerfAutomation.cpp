@@ -4,14 +4,17 @@
 #include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSettings.h"
 #include "BlenderBridgeSource.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Dom/JsonObject.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "ObjectTools.h"
 #include "Serialization/JsonSerializer.h"
 #include "Tests/AutomationEditorCommon.h"
+#include "UObject/GarbageCollection.h"
 #include "UObject/StrongObjectPtr.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -197,6 +200,40 @@ namespace
                 || !Component->BakedStaticMesh.ToSoftObjectPath().IsNull());
     }
 
+    bool CleanupAutomationScratchBakeRoot(FString& OutError)
+    {
+        OutError.Reset();
+
+        const UBlenderBridgeSettings* Settings = GetDefault<UBlenderBridgeSettings>();
+        if (Settings == nullptr || Settings->AutomationPerfScratchBakeRoot.IsEmpty())
+        {
+            return true;
+        }
+
+        const FName ScratchRootPath(*Settings->AutomationPerfScratchBakeRoot);
+        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+
+        TArray<FAssetData> ScratchAssets;
+        AssetRegistryModule.Get().GetAssetsByPath(ScratchRootPath, ScratchAssets, true);
+
+        TArray<UObject*> AssetsToDelete;
+        AssetsToDelete.Reserve(ScratchAssets.Num());
+        for (const FAssetData& AssetData : ScratchAssets)
+        {
+            if (UObject* Asset = AssetData.GetAsset())
+            {
+                AssetsToDelete.Add(Asset);
+            }
+        }
+
+        if (!AssetsToDelete.IsEmpty())
+        {
+            ObjectTools::DeleteObjects(AssetsToDelete, false);
+        }
+
+        return true;
+    }
+
     class FRunBlenderBridgePerfScenarioCommand final : public IAutomationLatentCommand
     {
     public:
@@ -339,6 +376,17 @@ namespace
                 return Fail(TEXT("Blender Bridge settings are unavailable."));
             }
 
+            if (Scenario.bUseAutomationScratchBakeRoot)
+            {
+                FString CleanupError;
+                if (!CleanupAutomationScratchBakeRoot(CleanupError))
+                {
+                    return Fail(CleanupError.IsEmpty()
+                        ? TEXT("Failed to clean the automation scratch bake root before the scenario started.")
+                        : CleanupError);
+                }
+            }
+
             const FString FixtureRoot = FPaths::ConvertRelativePathToFull(Settings->AutomationFixtureRootDirectory.Path);
             if (FixtureRoot.IsEmpty())
             {
@@ -471,6 +519,8 @@ namespace
                 return false;
             }
 
+            CollectGarbage(RF_NoFlags);
+
             if (!StartScenarioAction(false, WarmupIterationIndex))
             {
                 return true;
@@ -553,6 +603,8 @@ namespace
                 StepStartTimeSeconds = FPlatformTime::Seconds();
                 return false;
             }
+
+            CollectGarbage(RF_NoFlags);
 
             if (!StartScenarioAction(true, MeasuredIterationIndex))
             {
@@ -639,11 +691,25 @@ namespace
                 }
             }
 
+            if (Scenario.bUseAutomationScratchBakeRoot)
+            {
+                FString CleanupError;
+                if (!CleanupAutomationScratchBakeRoot(CleanupError))
+                {
+                    return Fail(CleanupError.IsEmpty()
+                        ? TEXT("Failed to clean the automation scratch bake root during scenario cleanup.")
+                        : CleanupError);
+                }
+            }
+
             if (BridgeActor.IsValid())
             {
                 BridgeActor->Destroy();
             }
 
+            BridgeComponent.Reset();
+            BridgeActor.Reset();
+            FixtureSource.Reset();
             ClearWorldDirtyState();
             LogProgress(FString::Printf(TEXT("Completed Blender Bridge perf scenario '%s'."), *Scenario.Id));
             Step = EStep::Done;
@@ -717,6 +783,9 @@ namespace
                 BridgeActor->Destroy();
             }
 
+            BridgeComponent.Reset();
+            BridgeActor.Reset();
+            FixtureSource.Reset();
             ClearWorldDirtyState();
             bFinished = true;
             Step = EStep::Done;

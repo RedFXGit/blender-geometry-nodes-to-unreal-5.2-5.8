@@ -10,6 +10,8 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
@@ -107,7 +109,30 @@ namespace
 
     bool ShouldLogCookTimings()
     {
-        return CVarBlenderBridgeLogCookTimings.GetValueOnGameThread() != 0;
+        static bool bInitializedFromCommandLine = false;
+        static bool bCommandLineOverrideEnabled = false;
+
+        if (!bInitializedFromCommandLine)
+        {
+            bInitializedFromCommandLine = true;
+
+            FString ExplicitValue;
+            if (FParse::Value(FCommandLine::Get(), TEXT("BlenderBridgeLogCookTimings="), ExplicitValue))
+            {
+                ExplicitValue.TrimQuotesInline();
+                bCommandLineOverrideEnabled =
+                    ExplicitValue == TEXT("1") ||
+                    ExplicitValue.Equals(TEXT("true"), ESearchCase::IgnoreCase) ||
+                    ExplicitValue.Equals(TEXT("yes"), ESearchCase::IgnoreCase) ||
+                    ExplicitValue.Equals(TEXT("on"), ESearchCase::IgnoreCase);
+            }
+            else if (FParse::Param(FCommandLine::Get(), TEXT("BlenderBridgeLogCookTimings")))
+            {
+                bCommandLineOverrideEnabled = true;
+            }
+        }
+
+        return bCommandLineOverrideEnabled || CVarBlenderBridgeLogCookTimings.GetValueOnGameThread() != 0;
     }
 
     bool TryGetTimingFieldMs(const TSharedPtr<FJsonObject>& Payload, const TCHAR* FieldName, double& OutValueMs)

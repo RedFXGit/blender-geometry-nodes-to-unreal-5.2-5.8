@@ -531,6 +531,7 @@ class BridgeWorker:
         self.instance_memory = mmap.mmap(-1, args.instance_memory_bytes, tagname=args.instance_memory_name)
         self.loaded_sources: dict[str, BridgeLoadedSource] = {}
         self.component_states: dict[tuple[str, str], BridgeComponentState] = {}
+        self.shared_slot_buffers: list[memoryview] | None = None
 
     def send(self, message_type: str, **payload: object) -> None:
         payload["message_type"] = message_type
@@ -1149,7 +1150,16 @@ class BridgeWorker:
 
         return material_slots
 
-    def extract_local_render_buffers_for_mesh(self, mesh, extract_timings: dict[str, float] | None = None):
+    def extract_local_render_buffers_for_mesh(
+        self,
+        mesh,
+        extract_timings: dict[str, float] | None = None,
+        mesh_buffer_cache: dict | None = None,
+    ):
+        cache_key = self.get_cache_key(mesh)
+        if mesh_buffer_cache is not None and cache_key is not None and cache_key in mesh_buffer_cache:
+            return mesh_buffer_cache[cache_key]
+
         prepare_start_time = time.perf_counter()
         mesh.calc_loop_triangles()
         if hasattr(mesh, "calc_normals_split"):
@@ -1169,11 +1179,9 @@ class BridgeWorker:
 
         triangle_vertex_indices = np.empty(triangle_count * 3, dtype=np.int32)
         mesh.loop_triangles.foreach_get("vertices", triangle_vertex_indices)
-        triangle_vertex_indices = triangle_vertex_indices.reshape(-1, 3)
 
         triangle_loop_indices = np.empty(triangle_count * 3, dtype=np.int32)
         mesh.loop_triangles.foreach_get("loops", triangle_loop_indices)
-        triangle_loop_indices = triangle_loop_indices.reshape(-1, 3)
 
         material_slots = self.build_material_slot_descriptors_for_mesh(mesh)
         triangle_material_indices = np.empty(triangle_count, dtype=np.int32)
@@ -1181,46 +1189,121 @@ class BridgeWorker:
         if len(material_slots) == 1:
             triangle_material_indices.fill(0)
         else:
-            triangle_material_indices = np.clip(triangle_material_indices, 0, len(material_slots) - 1)
+            np.clip(triangle_material_indices, 0, len(material_slots) - 1, out=triangle_material_indices)
 
-        positions = vertex_coords[triangle_vertex_indices].astype(np.float32, copy=True)
+        packed_positions = np.empty((triangle_count * 3, 3), dtype=np.float32)
+        np.take(vertex_coords, triangle_vertex_indices, axis=0, out=packed_positions)
         try:
             loop_normals = np.empty(len(mesh.loops) * 3, dtype=np.float32)
             mesh.loops.foreach_get("normal", loop_normals)
             loop_normals = loop_normals.reshape(-1, 3)
-            normals = loop_normals[triangle_loop_indices].astype(np.float32, copy=True)
+            packed_normals = np.empty((triangle_count * 3, 3), dtype=np.float32)
+            np.take(loop_normals, triangle_loop_indices, axis=0, out=packed_normals)
         except (AttributeError, RuntimeError):
             vertex_normals = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
             mesh.vertices.foreach_get("normal", vertex_normals)
             vertex_normals = vertex_normals.reshape(-1, 3)
-            normals = vertex_normals[triangle_vertex_indices].astype(np.float32, copy=True)
+            packed_normals = np.empty((triangle_count * 3, 3), dtype=np.float32)
+            np.take(vertex_normals, triangle_vertex_indices, axis=0, out=packed_normals)
 
         if mesh.uv_layers.active is not None and len(mesh.uv_layers.active.data) > 0:
             loop_uv = np.empty(len(mesh.uv_layers.active.data) * 2, dtype=np.float32)
             mesh.uv_layers.active.data.foreach_get("uv", loop_uv)
             loop_uv = loop_uv.reshape(-1, 2)
-            uv0 = loop_uv[triangle_loop_indices].astype(np.float32, copy=True)
+            packed_uv0 = np.empty((triangle_count * 3, 2), dtype=np.float32)
+            np.take(loop_uv, triangle_loop_indices, axis=0, out=packed_uv0)
         else:
-            uv0 = np.zeros((triangle_count, 3, 2), dtype=np.float32)
+            packed_uv0 = np.zeros((triangle_count * 3, 2), dtype=np.float32)
 
         read_end_time = time.perf_counter()
         if extract_timings is not None:
             extract_timings["mesh_read_ms"] += elapsed_ms(read_start_time, read_end_time)
 
         expand_start_time = time.perf_counter()
-        render_vertex_count = triangle_count * 3
-        packed_positions = np.ascontiguousarray(positions.reshape(render_vertex_count, 3), dtype=np.float32)
-        packed_normals = np.ascontiguousarray(normals.reshape(render_vertex_count, 3), dtype=np.float32)
-        packed_uv0 = np.ascontiguousarray(uv0.reshape(render_vertex_count, 2), dtype=np.float32)
         expand_end_time = time.perf_counter()
         if extract_timings is not None:
             extract_timings["mesh_expand_ms"] += elapsed_ms(expand_start_time, expand_end_time)
-        return (
+        extracted_buffers = (
             packed_positions,
             packed_normals,
             packed_uv0,
             np.ascontiguousarray(triangle_material_indices, dtype=np.int32),
             material_slots,
+        )
+        if mesh_buffer_cache is not None and cache_key is not None:
+            mesh_buffer_cache[cache_key] = extracted_buffers
+        return extracted_buffers
+
+    def compose_transform_matrices(self, parent_transform, local_transform):
+        if parent_transform is None:
+            return local_transform.copy() if local_transform is not None else None
+        if local_transform is None:
+            return parent_transform.copy()
+        return parent_transform @ local_transform
+
+    def build_preview_mesh_payload(self, extracted_buffers, cache_key, preview_mesh_cache: dict):
+        if cache_key is not None and cache_key in preview_mesh_cache:
+            return preview_mesh_cache[cache_key]
+
+        positions, normals, uv0, triangle_material_indices, material_slots = extracted_buffers
+        if positions.size == 0:
+            return None
+
+        triangle_positions = positions.reshape(-1, 3, 3)
+        triangle_normals = normals.reshape(-1, 3, 3)
+        triangle_uv0 = uv0.reshape(-1, 3, 2)
+        normalized_material_indices = np.array(triangle_material_indices, dtype=np.int32, copy=False)
+        if normalized_material_indices.shape[0] != triangle_positions.shape[0]:
+            raise RuntimeError("Triangle material index count does not match extracted triangle buffers")
+
+        sorted_triangle_order = np.argsort(normalized_material_indices, kind="stable")
+        sorted_material_indices = normalized_material_indices[sorted_triangle_order]
+        sorted_positions = np.ascontiguousarray(triangle_positions[sorted_triangle_order].reshape(-1, 3), dtype=np.float32)
+        sorted_normals = np.ascontiguousarray(triangle_normals[sorted_triangle_order].reshape(-1, 3), dtype=np.float32)
+        sorted_uv0 = np.ascontiguousarray(triangle_uv0[sorted_triangle_order].reshape(-1, 2), dtype=np.float32)
+
+        slot_ranges: list[dict[str, object]] = []
+        if sorted_material_indices.size > 0:
+            run_start_indices = [0]
+            run_start_indices.extend((np.nonzero(np.diff(sorted_material_indices))[0] + 1).tolist())
+            run_end_indices = run_start_indices[1:] + [sorted_material_indices.shape[0]]
+
+            first_vertex = 0
+            for run_start_index, run_end_index in zip(run_start_indices, run_end_indices):
+                slot_index = int(sorted_material_indices[run_start_index])
+                if slot_index < 0 or slot_index >= len(material_slots):
+                    continue
+
+                slot = material_slots[slot_index]
+                slot_name = str(slot.get("slot_name") or "").strip()
+                material_name = str(slot.get("material_name") or "").strip()
+                slot_id = str(slot.get("slot_id") or self.make_material_slot_id(slot_name, material_name, slot_index))
+                vertex_count = int((run_end_index - run_start_index) * 3)
+                slot_ranges.append(
+                    {
+                        "slot_id": slot_id,
+                        "slot_name": slot_name or slot_id,
+                        "material_name": material_name or slot_name or slot_id,
+                        "first_vertex": first_vertex,
+                        "vertex_count": vertex_count,
+                    }
+                )
+                first_vertex += vertex_count
+
+        preview_mesh_payload = {
+            "positions": sorted_positions,
+            "normals": sorted_normals,
+            "uv0": sorted_uv0,
+            "slot_ranges": slot_ranges,
+        }
+        if cache_key is not None:
+            preview_mesh_cache[cache_key] = preview_mesh_payload
+        return preview_mesh_payload
+
+    def make_preview_render_part(self, preview_mesh_payload, transform_matrix=None):
+        return (
+            preview_mesh_payload,
+            transform_matrix.copy() if transform_matrix is not None else None,
         )
 
     def transform_render_buffers(self, positions, normals, uv0, transform_matrix, convert_to_unreal: bool):
@@ -1404,6 +1487,136 @@ class BridgeWorker:
             np.concatenate(merged_normals_parts, axis=0),
             np.concatenate(merged_uv0_parts, axis=0),
             np.concatenate(merged_indices_parts, axis=0),
+            material_slot_descriptors,
+            section_descriptors,
+        )
+
+    def merge_preview_render_parts(
+        self,
+        render_parts,
+        root_transform_matrix,
+        convert_to_unreal: bool,
+        extract_timings: dict[str, float] | None = None,
+    ):
+        ordered_slot_keys: list[tuple[str, str, str]] = []
+        slot_metadata_by_key: dict[tuple[str, str, str], dict[str, object]] = {}
+        slot_chunks: dict[tuple[str, str, str], list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+        slot_vertex_counts: dict[tuple[str, str, str], int] = {}
+
+        for render_part in render_parts:
+            preview_mesh_payload = render_part[0]
+            transform_start_time = time.perf_counter()
+            combined_transform = self.compose_transform_matrices(root_transform_matrix, render_part[1])
+            positions, normals, uv0 = self.transform_render_buffers(
+                preview_mesh_payload["positions"],
+                preview_mesh_payload["normals"],
+                preview_mesh_payload["uv0"],
+                combined_transform,
+                convert_to_unreal,
+            )
+            if extract_timings is not None:
+                extract_timings["transform_ms"] += elapsed_ms(transform_start_time)
+            if positions.size == 0:
+                continue
+
+            merge_part_start_time = time.perf_counter()
+            for slot_range in preview_mesh_payload["slot_ranges"]:
+                slot_id = str(slot_range["slot_id"])
+                slot_name = str(slot_range["slot_name"])
+                material_name = str(slot_range["material_name"])
+                slot_key = (slot_id, slot_name, material_name)
+                if slot_key not in slot_metadata_by_key:
+                    ordered_slot_keys.append(slot_key)
+                    slot_metadata_by_key[slot_key] = {
+                        "slot_id": slot_id,
+                        "slot_name": slot_name or slot_id,
+                        "material_name": material_name or slot_name or slot_id,
+                    }
+
+                chunk_start = int(slot_range["first_vertex"])
+                chunk_end = chunk_start + int(slot_range["vertex_count"])
+                positions_chunk = positions[chunk_start:chunk_end]
+                normals_chunk = normals[chunk_start:chunk_end]
+                uv0_chunk = uv0[chunk_start:chunk_end]
+                slot_chunks.setdefault(slot_key, []).append((positions_chunk, normals_chunk, uv0_chunk))
+                slot_vertex_counts[slot_key] = slot_vertex_counts.get(slot_key, 0) + int(positions_chunk.shape[0])
+
+            if extract_timings is not None:
+                extract_timings["merge_ms"] += elapsed_ms(merge_part_start_time)
+
+        if not ordered_slot_keys:
+            return None
+
+        merge_finalize_start_time = time.perf_counter()
+        material_slot_descriptors: list[dict[str, object]] = []
+        section_descriptors: list[dict[str, object]] = []
+
+        total_vertex_count = sum(slot_vertex_counts.values())
+        merged_positions = np.empty((total_vertex_count, 3), dtype=np.float32)
+        merged_normals = np.empty((total_vertex_count, 3), dtype=np.float32)
+        merged_uv0 = np.empty((total_vertex_count, 2), dtype=np.float32)
+        merged_indices = np.empty(total_vertex_count, dtype=np.uint32)
+
+        vertex_offset = 0
+        index_offset = 0
+        section_index = 0
+
+        for slot_key in ordered_slot_keys:
+            chunks = slot_chunks.get(slot_key)
+            if not chunks:
+                continue
+
+            section_vertex_count = slot_vertex_counts.get(slot_key, 0)
+            if section_vertex_count <= 0:
+                continue
+
+            section_write_offset = vertex_offset
+            for positions_chunk, normals_chunk, uv0_chunk in chunks:
+                next_write_offset = section_write_offset + positions_chunk.shape[0]
+                merged_positions[section_write_offset:next_write_offset] = positions_chunk
+                merged_normals[section_write_offset:next_write_offset] = normals_chunk
+                merged_uv0[section_write_offset:next_write_offset] = uv0_chunk
+                section_write_offset = next_write_offset
+
+            section_index_count = section_vertex_count
+
+            merged_indices[vertex_offset : vertex_offset + section_vertex_count] = np.arange(
+                vertex_offset,
+                vertex_offset + section_vertex_count,
+                dtype=np.uint32,
+            )
+
+            slot_metadata = dict(slot_metadata_by_key[slot_key])
+            slot_metadata["section_index"] = section_index
+            material_slot_descriptors.append(slot_metadata)
+            section_descriptors.append(
+                {
+                    "section_index": section_index,
+                    "slot_id": slot_metadata["slot_id"],
+                    "slot_name": slot_metadata["slot_name"],
+                    "material_name": slot_metadata["material_name"],
+                    "first_vertex": vertex_offset,
+                    "vertex_count": section_vertex_count,
+                    "first_index": index_offset,
+                    "index_count": section_index_count,
+                }
+            )
+
+            vertex_offset += section_vertex_count
+            index_offset += section_index_count
+            section_index += 1
+
+        if extract_timings is not None:
+            extract_timings["merge_ms"] += elapsed_ms(merge_finalize_start_time)
+
+        if total_vertex_count <= 0:
+            return None
+
+        return (
+            merged_positions,
+            merged_normals,
+            merged_uv0,
+            merged_indices,
             material_slot_descriptors,
             section_descriptors,
         )
@@ -1791,6 +2004,143 @@ class BridgeWorker:
             reference_cache[cache_key] = render_parts
         return render_parts
 
+    def build_preview_render_parts_from_reference(
+        self,
+        reference,
+        depsgraph,
+        reference_cache: dict,
+        mesh_buffer_cache: dict,
+        preview_mesh_cache: dict,
+        recursion_depth: int,
+        extract_timings: dict[str, float] | None = None,
+    ):
+        cache_key = self.get_cache_key(reference)
+        if cache_key is not None and cache_key in reference_cache:
+            return reference_cache[cache_key]
+
+        render_parts = []
+        if reference is not None:
+            if bpy is not None and isinstance(reference, bpy.types.Object):
+                if reference.type in SUPPORTED_OBJECT_TYPES:
+                    evaluated_reference = reference.evaluated_get(depsgraph)
+                    geometry_getter = getattr(evaluated_reference, "evaluated_geometry", None)
+                    if callable(geometry_getter):
+                        render_parts = self.build_preview_render_parts_from_geometry(
+                            geometry_getter(),
+                            depsgraph,
+                            reference_cache,
+                            mesh_buffer_cache,
+                            preview_mesh_cache,
+                            recursion_depth,
+                            extract_timings,
+                        )
+                    else:
+                        evaluated_mesh = evaluated_reference.to_mesh(
+                            preserve_all_data_layers=True,
+                            depsgraph=depsgraph,
+                        )
+                        if evaluated_mesh is not None:
+                            try:
+                                mesh_cache_key = self.get_cache_key(evaluated_mesh)
+                                extracted_buffers = self.extract_local_render_buffers_for_mesh(
+                                    evaluated_mesh,
+                                    extract_timings,
+                                    mesh_buffer_cache,
+                                )
+                                if extracted_buffers is not None:
+                                    preview_mesh_payload = self.build_preview_mesh_payload(
+                                        extracted_buffers,
+                                        mesh_cache_key,
+                                        preview_mesh_cache,
+                                    )
+                                    render_parts = [self.make_preview_render_part(preview_mesh_payload)]
+                            finally:
+                                evaluated_reference.to_mesh_clear()
+            elif hasattr(reference, "mesh") and hasattr(reference, "instance_references"):
+                render_parts = self.build_preview_render_parts_from_geometry(
+                    reference,
+                    depsgraph,
+                    reference_cache,
+                    mesh_buffer_cache,
+                    preview_mesh_cache,
+                    recursion_depth,
+                    extract_timings,
+                )
+
+        if cache_key is not None:
+            reference_cache[cache_key] = render_parts
+        return render_parts
+
+    def build_preview_render_parts_from_geometry(
+        self,
+        geometry,
+        depsgraph,
+        reference_cache: dict,
+        mesh_buffer_cache: dict,
+        preview_mesh_cache: dict,
+        recursion_depth: int,
+        extract_timings: dict[str, float] | None = None,
+    ):
+        if recursion_depth > MAX_GEOMETRYSET_RECURSION_DEPTH:
+            raise RuntimeError("Geometry Nodes instance recursion exceeded the supported depth")
+
+        render_parts = []
+        mesh = getattr(geometry, "mesh", None)
+        if mesh is not None:
+            mesh_cache_key = self.get_cache_key(mesh)
+            extracted_buffers = self.extract_local_render_buffers_for_mesh(mesh, extract_timings, mesh_buffer_cache)
+            if extracted_buffers is not None:
+                preview_mesh_payload = self.build_preview_mesh_payload(
+                    extracted_buffers,
+                    mesh_cache_key,
+                    preview_mesh_cache,
+                )
+                render_parts.append(self.make_preview_render_part(preview_mesh_payload))
+
+        instances_pointcloud = None
+        try:
+            instances_pointcloud = geometry.instances_pointcloud()
+        except AttributeError:
+            instances_pointcloud = None
+
+        if instances_pointcloud is None:
+            return render_parts
+
+        try:
+            transform_data = instances_pointcloud.attributes["instance_transform"].data
+            reference_index_data = instances_pointcloud.attributes[".reference_index"].data
+        except (AttributeError, KeyError, TypeError):
+            return render_parts
+
+        references = geometry.instance_references()
+        if not references:
+            return render_parts
+
+        for point_index in range(len(instances_pointcloud.points)):
+            reference_index = int(reference_index_data[point_index].value)
+            if reference_index < 0 or reference_index >= len(references):
+                continue
+
+            instance_transform = transform_data[point_index].value.copy()
+            reference_parts = self.build_preview_render_parts_from_reference(
+                references[reference_index],
+                depsgraph,
+                reference_cache,
+                mesh_buffer_cache,
+                preview_mesh_cache,
+                recursion_depth + 1,
+                extract_timings,
+            )
+            for reference_part in reference_parts:
+                render_parts.append(
+                    (
+                        reference_part[0],
+                        self.compose_transform_matrices(instance_transform, reference_part[1]),
+                    )
+                )
+
+        return render_parts
+
     def build_local_render_parts_from_geometry(
         self,
         geometry,
@@ -1874,26 +2224,19 @@ class BridgeWorker:
         extract_timings["geometry_access_ms"] += elapsed_ms(geometry_access_start_time, geometry_access_end_time)
 
         build_parts_start_time = time.perf_counter()
-        local_render_parts = self.build_local_render_parts_from_geometry(geometry, depsgraph, {}, 0, extract_timings)
+        local_render_parts = self.build_preview_render_parts_from_geometry(geometry, depsgraph, {}, {}, {}, 0, extract_timings)
         build_parts_end_time = time.perf_counter()
         extract_timings["build_parts_ms"] += elapsed_ms(build_parts_start_time, build_parts_end_time)
         if not local_render_parts:
             return None, None, extract_timings
 
         world_matrix = target_object.matrix_world.copy()
-        world_render_parts = [
-            self.transform_render_part(
-                render_part,
-                world_matrix,
-                convert_to_unreal=True,
-                extract_timings=extract_timings,
-            )
-            for render_part in local_render_parts
-        ]
-        merge_start_time = time.perf_counter()
-        merged_buffers = self.merge_render_parts(world_render_parts)
-        merge_end_time = time.perf_counter()
-        extract_timings["merge_ms"] += elapsed_ms(merge_start_time, merge_end_time)
+        merged_buffers = self.merge_preview_render_parts(
+            local_render_parts,
+            world_matrix,
+            convert_to_unreal=True,
+            extract_timings=extract_timings,
+        )
         if merged_buffers is None:
             return None, None, extract_timings
 
@@ -1943,10 +2286,14 @@ class BridgeWorker:
         source_handle: str = "",
         target_id: str = "",
     ) -> int | None:
-        positions = np.ascontiguousarray(positions, dtype=np.float32)
-        normals = np.ascontiguousarray(normals, dtype=np.float32)
-        uv0 = np.ascontiguousarray(uv0, dtype=np.float32)
-        indices = np.ascontiguousarray(indices, dtype=np.uint32)
+        if positions.dtype != np.float32 or not positions.flags.c_contiguous:
+            positions = np.ascontiguousarray(positions, dtype=np.float32)
+        if normals.dtype != np.float32 or not normals.flags.c_contiguous:
+            normals = np.ascontiguousarray(normals, dtype=np.float32)
+        if uv0.dtype != np.float32 or not uv0.flags.c_contiguous:
+            uv0 = np.ascontiguousarray(uv0, dtype=np.float32)
+        if indices.dtype != np.uint32 or not indices.flags.c_contiguous:
+            indices = np.ascontiguousarray(indices, dtype=np.uint32)
 
         if positions.ndim != 2 or positions.shape[1] != 3:
             raise RuntimeError("Positions buffer must be shaped as [vertex_count, 3]")
@@ -1979,14 +2326,19 @@ class BridgeWorker:
 
         slot.status = 0
 
-        slot_buffer = memoryview(self.shared_memory)[
-            header.header_bytes + slot_index * header.slot_stride : header.header_bytes + (slot_index + 1) * header.slot_stride
-        ]
+        if self.shared_slot_buffers is None:
+            self.shared_slot_buffers = [
+                memoryview(self.shared_memory)[
+                    header.header_bytes + index * header.slot_stride : header.header_bytes + (index + 1) * header.slot_stride
+                ]
+                for index in range(header.slot_count)
+            ]
 
-        np.frombuffer(slot_buffer, dtype=np.float32, count=positions.size, offset=positions_offset)[:] = positions.reshape(-1)
-        np.frombuffer(slot_buffer, dtype=np.float32, count=normals.size, offset=normals_offset)[:] = normals.reshape(-1)
-        np.frombuffer(slot_buffer, dtype=np.float32, count=uv0.size, offset=uv0_offset)[:] = uv0.reshape(-1)
-        np.frombuffer(slot_buffer, dtype=np.uint32, count=indices.size, offset=indices_offset)[:] = indices
+        slot_buffer = self.shared_slot_buffers[slot_index]
+        slot_buffer[positions_offset : positions_offset + positions.nbytes] = memoryview(positions).cast("B")
+        slot_buffer[normals_offset : normals_offset + normals.nbytes] = memoryview(normals).cast("B")
+        slot_buffer[uv0_offset : uv0_offset + uv0.nbytes] = memoryview(uv0).cast("B")
+        slot_buffer[indices_offset : indices_offset + indices.nbytes] = memoryview(indices).cast("B")
 
         slot.sequence += 1
         slot.slot_index = slot_index
