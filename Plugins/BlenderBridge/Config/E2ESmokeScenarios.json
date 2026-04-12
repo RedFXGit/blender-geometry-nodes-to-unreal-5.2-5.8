@@ -1,0 +1,28 @@
+{
+  "scenarios": [
+    {
+      "id": "house_static_bake",
+      "display_name": "HouseCookAndStaticBake",
+      "blend_file": "GeometryNodesFrenchHous.blend",
+      "target_id": "HouseOne|Geometry Nodes",
+      "scenario_type": "house_static_bake",
+      "use_automation_scratch_bake_root": true
+    },
+    {
+      "id": "curve_spline_recook",
+      "display_name": "CurveOwnerSplineRecook",
+      "blend_file": "Curve.blend",
+      "target_id": "Blenderesse_ElectricLineGenerator_V01|GeometryNodes",
+      "scenario_type": "curve_spline_recook",
+      "use_automation_scratch_bake_root": false
+    },
+    {
+      "id": "instances_instanced_bake_sharing",
+      "display_name": "InstancesInstancedBakeSharing",
+      "blend_file": "Instances.blend",
+      "target_id": "BezierCurve|GeometryNodes",
+      "scenario_type": "instances_instanced_bake_sharing",
+      "use_automation_scratch_bake_root": true
+    }
+  ]
+}

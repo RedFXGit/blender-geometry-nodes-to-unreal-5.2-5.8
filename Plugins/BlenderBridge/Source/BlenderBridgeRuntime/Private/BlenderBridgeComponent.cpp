@@ -8,15 +8,22 @@
 #include "Components/SplineComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/UserDefinedEnum.h"
+#include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/Paths.h"
 #include "Misc/SecureHash.h"
 #include "Modules/ModuleManager.h"
 #include "ProceduralMeshComponent.h"
+#include "StaticMeshResources.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectGlobals.h"
+
+#if WITH_EDITOR
+#include "Editor.h"
+#endif
 
 #ifndef BLENDER_BRIDGE_BUILD_VERSION
 #define BLENDER_BRIDGE_BUILD_VERSION TEXT("Unknown build")
@@ -49,6 +56,22 @@ namespace
         case EBlenderBridgeInputType::Unsupported:
         default:
             return TEXT("Unsupported");
+        }
+    }
+
+    const TCHAR* LexToString(const EBlenderBridgeGeometrySourceKind SourceKind)
+    {
+        switch (SourceKind)
+        {
+        case EBlenderBridgeGeometrySourceKind::StaticMeshComponent:
+            return TEXT("StaticMeshComponent");
+        case EBlenderBridgeGeometrySourceKind::SplineComponent:
+            return TEXT("SplineComponent");
+        case EBlenderBridgeGeometrySourceKind::EmbeddedSpline:
+            return TEXT("EmbeddedSpline");
+        case EBlenderBridgeGeometrySourceKind::None:
+        default:
+            return TEXT("None");
         }
     }
 
@@ -97,6 +120,107 @@ namespace
         }
 
         return FMD5::HashAnsiString(*SerializedCurve);
+    }
+
+    bool IsGeometrySourceKindAllowed(
+        const FBridgeGeometryInputDescriptor& Descriptor,
+        const EBlenderBridgeGeometrySourceKind SourceKind)
+    {
+        return Descriptor.AllowedSourceKinds.Contains(SourceKind);
+    }
+
+    bool SupportsComponentReferenceBinding(const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        return Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+            || Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent);
+    }
+
+    template <typename ComponentType>
+    ComponentType* FindFirstComponentOnActor(AActor* Actor)
+    {
+        if (Actor == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (ComponentType* RootComponent = Cast<ComponentType>(Actor->GetRootComponent()))
+        {
+            return RootComponent;
+        }
+
+        TInlineComponentArray<ComponentType*> MatchingComponents(Actor);
+        for (ComponentType* MatchingComponent : MatchingComponents)
+        {
+            if (MatchingComponent != nullptr)
+            {
+                return MatchingComponent;
+            }
+        }
+
+        return nullptr;
+    }
+
+    template <typename ComponentType>
+    ComponentType* ResolveReferencedComponent(AActor* OwningActor, const FComponentReference& Reference)
+    {
+        AActor* SearchActor = Reference.OtherActor.Get();
+        if (SearchActor == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (ComponentType* DirectComponent = Cast<ComponentType>(Reference.GetComponent(OwningActor)))
+        {
+            return DirectComponent;
+        }
+
+        return FindFirstComponentOnActor<ComponentType>(SearchActor);
+    }
+
+    USceneComponent* ResolveReferencedSceneComponentForDescriptor(
+        AActor* OwningActor,
+        const FComponentReference& Reference,
+        const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        if (Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent))
+        {
+            if (USplineComponent* SplineComponent = ResolveReferencedComponent<USplineComponent>(OwningActor, Reference))
+            {
+                return SplineComponent;
+            }
+        }
+
+        if (Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent))
+        {
+            if (UStaticMeshComponent* StaticMeshComponent = ResolveReferencedComponent<UStaticMeshComponent>(OwningActor, Reference))
+            {
+                return StaticMeshComponent;
+            }
+        }
+
+        return nullptr;
+    }
+
+    void NormalizeComponentReferenceForDescriptor(
+        FComponentReference& Reference,
+        AActor* OwningActor,
+        const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        Reference.ComponentProperty = NAME_None;
+
+        if (!Reference.OtherActor.IsValid())
+        {
+            Reference.PathToComponent.Reset();
+            return;
+        }
+
+        if (USceneComponent* SceneComponent = ResolveReferencedSceneComponentForDescriptor(OwningActor, Reference, Descriptor))
+        {
+            Reference.PathToComponent = SceneComponent->GetPathName(Reference.OtherActor.Get());
+            return;
+        }
+
+        Reference.PathToComponent.Reset();
     }
 
     FName GetBridgeInputBagPropertyName(const FBridgeInputSchema& Entry)
@@ -226,7 +350,9 @@ namespace
 
 UBlenderBridgeComponent::UBlenderBridgeComponent()
 {
-    PrimaryComponentTick.bCanEverTick = false;
+    PrimaryComponentTick.bCanEverTick = true;
+    PrimaryComponentTick.bStartWithTickEnabled = false;
+    bTickInEditor = true;
     BridgeBuildVersion = BLENDER_BRIDGE_BUILD_VERSION;
 }
 
@@ -287,6 +413,9 @@ void UBlenderBridgeComponent::OnRegister()
     Super::OnRegister();
 
     RefreshComponentHandle();
+#if WITH_EDITOR
+    BindEditorObservationDelegates();
+#endif
     BindSplineComponentDelegates();
 
     if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
@@ -296,6 +425,64 @@ void UBlenderBridgeComponent::OnRegister()
 
     UpdatePreviewVisibility();
     UpdateBakedOutputVisibility();
+    SetComponentTickEnabled(!ObservedGeometryComponents.IsEmpty());
+}
+
+void UBlenderBridgeComponent::TickComponent(
+    const float DeltaTime,
+    const ELevelTick TickType,
+    FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (ObservedGeometryComponents.IsEmpty())
+    {
+        return;
+    }
+
+    bool bObservedTransformChanged = false;
+    for (int32 ComponentIndex = ObservedGeometryComponents.Num() - 1; ComponentIndex >= 0; --ComponentIndex)
+    {
+        USceneComponent* SceneComponent = ObservedGeometryComponents[ComponentIndex].Get();
+        if (SceneComponent == nullptr)
+        {
+            ObservedGeometryComponentTransforms.Reset();
+            ObservedGeometryComponents.RemoveAtSwap(ComponentIndex);
+            continue;
+        }
+
+        const FObjectKey ComponentKey(SceneComponent);
+        const FTransform CurrentTransform = SceneComponent->GetComponentTransform();
+        if (FTransform* PreviousTransform = ObservedGeometryComponentTransforms.Find(ComponentKey))
+        {
+            if (!PreviousTransform->Equals(CurrentTransform, KINDA_SMALL_NUMBER))
+            {
+                *PreviousTransform = CurrentTransform;
+                bObservedTransformChanged = true;
+            }
+        }
+        else
+        {
+            ObservedGeometryComponentTransforms.Add(ComponentKey, CurrentTransform);
+        }
+    }
+
+    if (bObservedTransformChanged)
+    {
+        LastObservedGeometryEvent = TEXT("Tick detected a reference transform change.");
+        UE_LOG(
+            LogBlenderBridge,
+            Verbose,
+            TEXT("Reference follow-cook tick detected a transform change for bridge '%s'."),
+            *GetPathNameSafe(this));
+        QueueCookFromObservedGeometryChange(TEXT("Reference actor changed. Waiting to cook."));
+    }
+
+    if (ObservedGeometryComponents.IsEmpty())
+    {
+        ObservedGeometryComponentTransforms.Reset();
+        SetComponentTickEnabled(false);
+    }
 }
 
 void UBlenderBridgeComponent::RefreshInputSchema()
@@ -391,10 +578,139 @@ TArray<FString> UBlenderBridgeComponent::GetAvailableTargetOptions() const
     return Options;
 }
 
+const FBridgeGeometryInputDescriptor* UBlenderBridgeComponent::FindGeometryInputDescriptor(const FString& InInputId) const
+{
+    return GeometryInputDescriptors.FindByPredicate([&InInputId](const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        return Descriptor.InputId == InInputId;
+    });
+}
+
+EBlenderBridgeGeometrySourceKind UBlenderBridgeComponent::GetDefaultGeometryBindingSourceKind(
+    const FBridgeGeometryInputDescriptor& Descriptor) const
+{
+    if (Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::EmbeddedSpline))
+    {
+        return EBlenderBridgeGeometrySourceKind::EmbeddedSpline;
+    }
+
+    return EBlenderBridgeGeometrySourceKind::None;
+}
+
+EBlenderBridgeGeometrySourceKind UBlenderBridgeComponent::GetEffectiveGeometryBindingSourceKind(const FString& InputId) const
+{
+    const FBridgeGeometryInputDescriptor* Descriptor = FindGeometryInputDescriptor(InputId);
+    if (Descriptor == nullptr)
+    {
+        return EBlenderBridgeGeometrySourceKind::None;
+    }
+
+    if (Descriptor->AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+        && ResolveBoundStaticMeshComponent(InputId) != nullptr)
+    {
+        return EBlenderBridgeGeometrySourceKind::StaticMeshComponent;
+    }
+
+    if (Descriptor->AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent)
+        && ResolveBoundSplineComponent(InputId) != nullptr)
+    {
+        return EBlenderBridgeGeometrySourceKind::SplineComponent;
+    }
+
+    const FBlenderBridgeGeometryBinding* ExistingBinding = GeometryBindings.FindByPredicate([&InputId](const FBlenderBridgeGeometryBinding& Binding)
+    {
+        return Binding.InputId == InputId;
+    });
+
+    if (ExistingBinding != nullptr && IsGeometrySourceKindAllowed(*Descriptor, ExistingBinding->SourceKind))
+    {
+        return ExistingBinding->SourceKind;
+    }
+
+    return GetDefaultGeometryBindingSourceKind(*Descriptor);
+}
+
+void UBlenderBridgeComponent::RebuildGeometryBindings(const bool bPreserveExistingValues)
+{
+    TMap<FString, FBlenderBridgeGeometryBinding> ExistingBindings;
+    if (bPreserveExistingValues)
+    {
+        for (const FBlenderBridgeGeometryBinding& ExistingBinding : GeometryBindings)
+        {
+            if (!ExistingBinding.InputId.IsEmpty())
+            {
+                ExistingBindings.Add(ExistingBinding.InputId, ExistingBinding);
+            }
+        }
+    }
+
+    TArray<FBlenderBridgeGeometryBinding> NewBindings;
+    NewBindings.Reserve(GeometryInputDescriptors.Num());
+    for (const FBridgeGeometryInputDescriptor& Descriptor : GeometryInputDescriptors)
+    {
+        FBlenderBridgeGeometryBinding Binding;
+        Binding.InputId = Descriptor.InputId;
+        Binding.SourceKind = GetDefaultGeometryBindingSourceKind(Descriptor);
+
+        if (const FBlenderBridgeGeometryBinding* ExistingBinding = ExistingBindings.Find(Descriptor.InputId))
+        {
+            Binding = *ExistingBinding;
+            Binding.InputId = Descriptor.InputId;
+            if (!IsGeometrySourceKindAllowed(Descriptor, Binding.SourceKind))
+            {
+                Binding.SourceKind = GetDefaultGeometryBindingSourceKind(Descriptor);
+            }
+        }
+
+        if (!SupportsComponentReferenceBinding(Descriptor))
+        {
+            Binding.ComponentReference = FComponentReference();
+        }
+
+        NewBindings.Add(MoveTemp(Binding));
+    }
+
+    const bool bPreviousSuppressPostEditNotifications = bSuppressPostEditNotifications;
+    bSuppressPostEditNotifications = true;
+    GeometryBindings = MoveTemp(NewBindings);
+    bSuppressPostEditNotifications = bPreviousSuppressPostEditNotifications;
+}
+
+void UBlenderBridgeComponent::NormalizeGeometryBindings()
+{
+    AActor* OwnerActor = GetOwner();
+    for (FBlenderBridgeGeometryBinding& Binding : GeometryBindings)
+    {
+        const FBridgeGeometryInputDescriptor* Descriptor = FindGeometryInputDescriptor(Binding.InputId);
+        if (Descriptor == nullptr)
+        {
+            Binding.SourceKind = EBlenderBridgeGeometrySourceKind::None;
+            Binding.ComponentReference = FComponentReference();
+            continue;
+        }
+
+        if (!IsGeometrySourceKindAllowed(*Descriptor, Binding.SourceKind))
+        {
+            Binding.SourceKind = GetDefaultGeometryBindingSourceKind(*Descriptor);
+        }
+
+        if (!SupportsComponentReferenceBinding(*Descriptor))
+        {
+            Binding.ComponentReference = FComponentReference();
+            continue;
+        }
+
+        NormalizeComponentReferenceForDescriptor(Binding.ComponentReference, OwnerActor, *Descriptor);
+    }
+}
+
 void UBlenderBridgeComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
 {
     CancelPendingSplineCook();
     UnbindSplineComponentDelegates();
+#if WITH_EDITOR
+    UnbindEditorObservationDelegates();
+#endif
     if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
     {
         FBlenderBridgeRuntimeModule::Get().GetSessionManager().ReleaseComponentState(this);
@@ -432,6 +748,19 @@ void UBlenderBridgeComponent::PostEditChangeProperty(FPropertyChangedEvent& Prop
     if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, MaterialOverrides))
     {
         ApplyPreviewMaterials();
+        return;
+    }
+
+    if (ChangedPropertyName == GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, GeometryBindings))
+    {
+        NormalizeGeometryBindings();
+        RefreshObservedSplineComponents();
+        FBlenderBridgeRuntimeModule::Get().GetSessionManager().ReleaseComponentState(this);
+        ApplyCurveOwnerDescription(TargetId, TargetCapabilities, true);
+        if (ConnectionState == EBlenderBridgeConnectionState::Connected)
+        {
+            SessionManager.RequestCook(this);
+        }
         return;
     }
 
@@ -479,22 +808,78 @@ void UBlenderBridgeComponent::RefreshComponentHandle()
 void UBlenderBridgeComponent::BindSplineComponentDelegates()
 {
     UnbindSplineComponentDelegates();
-
-    if (USplineComponent* SplineComponent = GetBridgeSplineComponent())
-    {
-        SplineComponent->GetOnSplineChanged().AddUObject(this, &UBlenderBridgeComponent::HandleBridgeSplineChanged);
-        SplineComponent->GetOnSplineUpdated().AddUObject(this, &UBlenderBridgeComponent::HandleBridgeSplineChanged);
-    }
+    RefreshObservedSplineComponents();
 }
 
 void UBlenderBridgeComponent::UnbindSplineComponentDelegates()
 {
-    if (USplineComponent* SplineComponent = GetBridgeSplineComponent())
+    for (const TWeakObjectPtr<USplineComponent>& ObservedSplineComponent : ObservedSplineComponents)
     {
-        SplineComponent->GetOnSplineChanged().RemoveAll(this);
-        SplineComponent->GetOnSplineUpdated().RemoveAll(this);
+        if (USplineComponent* SplineComponent = ObservedSplineComponent.Get())
+        {
+            SplineComponent->GetOnSplineChanged().RemoveAll(this);
+            SplineComponent->GetOnSplineUpdated().RemoveAll(this);
+        }
     }
+
+    ObservedSplineComponents.Reset();
+
+    for (const TWeakObjectPtr<USceneComponent>& ObservedGeometryComponent : ObservedGeometryComponents)
+    {
+        if (USceneComponent* SceneComponent = ObservedGeometryComponent.Get())
+        {
+            SceneComponent->TransformUpdated.RemoveAll(this);
+        }
+    }
+
+    ObservedGeometryComponents.Reset();
+    ObservedGeometryComponentTransforms.Reset();
+    ObservedGeometryDebugSummary = TEXT("No observed reference actors.");
+    LastObservedGeometryEvent.Reset();
+    SetComponentTickEnabled(false);
 }
+
+#if WITH_EDITOR
+void UBlenderBridgeComponent::BindEditorObservationDelegates()
+{
+    if (GEditor == nullptr)
+    {
+        return;
+    }
+
+    GEditor->OnEndObjectMovement().RemoveAll(this);
+    GEditor->OnEndObjectMovement().AddUObject(this, &UBlenderBridgeComponent::HandleEditorObjectMovementFinished);
+}
+
+void UBlenderBridgeComponent::UnbindEditorObservationDelegates()
+{
+    if (GEditor == nullptr)
+    {
+        return;
+    }
+
+    GEditor->OnEndObjectMovement().RemoveAll(this);
+}
+
+void UBlenderBridgeComponent::HandleEditorObjectMovementFinished(UObject& Object)
+{
+    if (!IsObservedGeometryObject(&Object))
+    {
+        return;
+    }
+
+    LastObservedGeometryEvent = FString::Printf(
+        TEXT("Editor move event: %s"),
+        *GetPathNameSafe(&Object));
+    UE_LOG(
+        LogBlenderBridge,
+        Log,
+        TEXT("Reference follow-cook editor move detected for '%s' on bridge '%s'."),
+        *GetPathNameSafe(&Object),
+        *GetPathNameSafe(this));
+    QueueCookFromObservedGeometryChange(TEXT("Reference actor changed. Waiting to cook."));
+}
+#endif
 
 USplineComponent* UBlenderBridgeComponent::GetBridgeSplineComponent() const
 {
@@ -605,16 +990,165 @@ void UBlenderBridgeComponent::HandleBridgeSplineChanged()
     QueueCookFromSplineEdit();
 }
 
-void UBlenderBridgeComponent::QueueCookFromSplineEdit()
+USplineComponent* UBlenderBridgeComponent::ResolveBoundSplineComponent(const FString& InputId) const
+{
+    const FBlenderBridgeGeometryBinding* Binding = GeometryBindings.FindByPredicate([&InputId](const FBlenderBridgeGeometryBinding& Entry)
+    {
+        return Entry.InputId == InputId;
+    });
+
+    if (Binding == nullptr)
+    {
+        return nullptr;
+    }
+
+    return ResolveReferencedComponent<USplineComponent>(GetOwner(), Binding->ComponentReference);
+}
+
+UStaticMeshComponent* UBlenderBridgeComponent::ResolveBoundStaticMeshComponent(const FString& InputId) const
+{
+    const FBlenderBridgeGeometryBinding* Binding = GeometryBindings.FindByPredicate([&InputId](const FBlenderBridgeGeometryBinding& Entry)
+    {
+        return Entry.InputId == InputId;
+    });
+
+    if (Binding == nullptr)
+    {
+        return nullptr;
+    }
+
+    return ResolveReferencedComponent<UStaticMeshComponent>(GetOwner(), Binding->ComponentReference);
+}
+
+USplineComponent* UBlenderBridgeComponent::GetActiveCurveSourceSplineComponent() const
+{
+    if (!TargetCapabilities.bSupportsCurveOwner)
+    {
+        return nullptr;
+    }
+
+    for (const FBridgeGeometryInputDescriptor& Descriptor : GeometryInputDescriptors)
+    {
+        if (!Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::EmbeddedSpline)
+            && !Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent))
+        {
+            continue;
+        }
+
+        const EBlenderBridgeGeometrySourceKind SourceKind = GetEffectiveGeometryBindingSourceKind(Descriptor.InputId);
+        if (SourceKind == EBlenderBridgeGeometrySourceKind::SplineComponent)
+        {
+            return ResolveBoundSplineComponent(Descriptor.InputId);
+        }
+
+        return GetBridgeSplineComponent();
+    }
+
+    return GetBridgeSplineComponent();
+}
+
+void UBlenderBridgeComponent::RefreshObservedSplineComponents()
+{
+    UnbindSplineComponentDelegates();
+
+    if (!TargetCapabilities.bSupportsCurveOwner)
+    {
+        // Static-mesh-backed owner geometry still needs transform tracking.
+    }
+    else if (USplineComponent* ActiveSplineComponent = GetActiveCurveSourceSplineComponent())
+    {
+        ActiveSplineComponent->GetOnSplineChanged().AddUObject(this, &UBlenderBridgeComponent::HandleBridgeSplineChanged);
+        ActiveSplineComponent->GetOnSplineUpdated().AddUObject(this, &UBlenderBridgeComponent::HandleBridgeSplineChanged);
+        ObservedSplineComponents.Add(ActiveSplineComponent);
+    }
+
+    auto AddObservedGeometryComponent = [this](USceneComponent* SceneComponent)
+    {
+        if (SceneComponent == nullptr)
+        {
+            return;
+        }
+
+        const bool bAlreadyObserved = ObservedGeometryComponents.ContainsByPredicate([SceneComponent](const TWeakObjectPtr<USceneComponent>& ObservedComponent)
+        {
+            return ObservedComponent.Get() == SceneComponent;
+        });
+
+        if (bAlreadyObserved)
+        {
+            return;
+        }
+
+        SceneComponent->TransformUpdated.AddUObject(this, &UBlenderBridgeComponent::HandleObservedGeometryTransformUpdated);
+        ObservedGeometryComponents.Add(SceneComponent);
+        ObservedGeometryComponentTransforms.Add(FObjectKey(SceneComponent), SceneComponent->GetComponentTransform());
+    };
+
+    for (const FBlenderBridgeGeometryBinding& Binding : GeometryBindings)
+    {
+        const EBlenderBridgeGeometrySourceKind SourceKind = GetEffectiveGeometryBindingSourceKind(Binding.InputId);
+        if (SourceKind == EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+        {
+            AddObservedGeometryComponent(ResolveBoundStaticMeshComponent(Binding.InputId));
+        }
+        else if (SourceKind == EBlenderBridgeGeometrySourceKind::SplineComponent)
+        {
+            AddObservedGeometryComponent(ResolveBoundSplineComponent(Binding.InputId));
+        }
+    }
+
+    SetComponentTickEnabled(!ObservedGeometryComponents.IsEmpty());
+    ObservedGeometryDebugSummary = BuildObservedGeometryDebugSummary();
+    UE_LOG(
+        LogBlenderBridge,
+        Log,
+        TEXT("Observed reference watch updated for '%s': %s"),
+        *GetPathNameSafe(this),
+        *ObservedGeometryDebugSummary);
+}
+
+void UBlenderBridgeComponent::HandleObservedGeometryTransformUpdated(
+    USceneComponent* UpdatedComponent,
+    EUpdateTransformFlags UpdateTransformFlags,
+    ETeleportType Teleport)
+{
+    (void)UpdateTransformFlags;
+    (void)Teleport;
+
+    if (UpdatedComponent == nullptr)
+    {
+        return;
+    }
+
+    LastObservedGeometryEvent = FString::Printf(
+        TEXT("Component transform event: %s"),
+        *GetPathNameSafe(UpdatedComponent));
+    QueueCookFromObservedGeometryChange(TEXT("Reference actor changed. Waiting to cook."));
+}
+
+void UBlenderBridgeComponent::QueueCookFromObservedGeometryChange(const TCHAR* StatusMessage)
 {
     CancelPendingSplineCook();
 
     if (Source == nullptr || TargetId.IsEmpty() || ConnectionState != EBlenderBridgeConnectionState::Connected)
     {
+        LastObservedGeometryEvent = FString::Printf(
+            TEXT("%s Cook skipped because source/target/session is not ready."),
+            StatusMessage);
         return;
     }
 
-    SetBridgeStatus(EBlenderBridgeComponentStatus::CookQueued, TEXT("Spline changed. Waiting to cook."));
+    SetBridgeStatus(EBlenderBridgeComponentStatus::CookQueued, StatusMessage);
+    LastObservedGeometryEvent = FString::Printf(
+        TEXT("%s Debounced recook queued for '%s'."),
+        StatusMessage,
+        *TargetId);
+    UE_LOG(
+        LogBlenderBridge,
+        Log,
+        TEXT("Reference follow-cook queued for bridge '%s' target '%s'."),
+        *GetPathNameSafe(this),
+        *TargetId);
     PendingSplineCookTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
         FTickerDelegate::CreateWeakLambda(
             this,
@@ -623,11 +1157,22 @@ void UBlenderBridgeComponent::QueueCookFromSplineEdit()
                 PendingSplineCookTickerHandle.Reset();
                 if (Source != nullptr && !TargetId.IsEmpty() && ConnectionState == EBlenderBridgeConnectionState::Connected)
                 {
+                    UE_LOG(
+                        LogBlenderBridge,
+                        Log,
+                        TEXT("Reference follow-cook executing RequestCook for bridge '%s' target '%s'."),
+                        *GetPathNameSafe(this),
+                        *TargetId);
                     RequestCook();
                 }
                 return false;
             }),
         0.25f);
+}
+
+void UBlenderBridgeComponent::QueueCookFromSplineEdit()
+{
+    QueueCookFromObservedGeometryChange(TEXT("Spline changed. Waiting to cook."));
 }
 
 void UBlenderBridgeComponent::CancelPendingSplineCook()
@@ -637,6 +1182,65 @@ void UBlenderBridgeComponent::CancelPendingSplineCook()
         FTSTicker::GetCoreTicker().RemoveTicker(PendingSplineCookTickerHandle);
         PendingSplineCookTickerHandle.Reset();
     }
+}
+
+bool UBlenderBridgeComponent::IsObservedGeometryObject(const UObject* Object) const
+{
+    if (Object == nullptr)
+    {
+        return false;
+    }
+
+    for (const TWeakObjectPtr<USceneComponent>& ObservedGeometryComponent : ObservedGeometryComponents)
+    {
+        const USceneComponent* SceneComponent = ObservedGeometryComponent.Get();
+        if (SceneComponent == nullptr)
+        {
+            continue;
+        }
+
+        if (Object == SceneComponent || Object == SceneComponent->GetOwner())
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+FString UBlenderBridgeComponent::BuildObservedGeometryDebugSummary() const
+{
+    if (ObservedGeometryComponents.IsEmpty())
+    {
+        return TEXT("No observed reference actors.");
+    }
+
+    TArray<FString> WatchedEntries;
+    WatchedEntries.Reserve(ObservedGeometryComponents.Num());
+    for (const TWeakObjectPtr<USceneComponent>& ObservedGeometryComponent : ObservedGeometryComponents)
+    {
+        const USceneComponent* SceneComponent = ObservedGeometryComponent.Get();
+        if (SceneComponent == nullptr)
+        {
+            continue;
+        }
+
+        const AActor* OwnerActor = SceneComponent->GetOwner();
+        WatchedEntries.Add(FString::Printf(
+            TEXT("%s -> %s"),
+            *GetNameSafe(OwnerActor),
+            *SceneComponent->GetName()));
+    }
+
+    if (WatchedEntries.IsEmpty())
+    {
+        return TEXT("Reference watch list contains only stale entries.");
+    }
+
+    return FString::Printf(
+        TEXT("Watching %d reference component(s): %s"),
+        WatchedEntries.Num(),
+        *FString::Join(WatchedEntries, TEXT("; ")));
 }
 
 void UBlenderBridgeComponent::ApplyDecodedMesh(FBridgeDecodedMesh&& DecodedMesh)
@@ -1014,6 +1618,113 @@ void UBlenderBridgeComponent::RebuildInputValues(const bool bPreserveExistingVal
     InputValues = MoveTemp(NewBag);
 }
 
+bool UBlenderBridgeComponent::BuildGeometryBindingPayloads(
+    TArray<FBridgeGeometryBindingPayload>& OutBindingPayloads,
+    FString& OutBindingPayloadHash,
+    FString& OutErrorMessage) const
+{
+    OutBindingPayloads.Reset();
+    OutBindingPayloadHash.Reset();
+    OutErrorMessage.Reset();
+
+    for (const FBlenderBridgeGeometryBinding& Binding : GeometryBindings)
+    {
+        const FBridgeGeometryInputDescriptor* Descriptor = FindGeometryInputDescriptor(Binding.InputId);
+        if (Descriptor == nullptr)
+        {
+            continue;
+        }
+
+        const EBlenderBridgeGeometrySourceKind SourceKind = GetEffectiveGeometryBindingSourceKind(Binding.InputId);
+        if (SourceKind == EBlenderBridgeGeometrySourceKind::None
+            || SourceKind == EBlenderBridgeGeometrySourceKind::EmbeddedSpline
+            || SourceKind == EBlenderBridgeGeometrySourceKind::SplineComponent)
+        {
+            continue;
+        }
+
+        if (SourceKind != EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+        {
+            continue;
+        }
+
+        UStaticMeshComponent* MeshComponent = ResolveBoundStaticMeshComponent(Binding.InputId);
+        if (MeshComponent == nullptr)
+        {
+            OutErrorMessage = FString::Printf(
+                TEXT("Geometry binding '%s' requires a valid StaticMeshComponent reference."),
+                *Descriptor->Label);
+            return false;
+        }
+
+        UStaticMesh* StaticMesh = MeshComponent->GetStaticMesh();
+        if (StaticMesh == nullptr)
+        {
+            OutErrorMessage = FString::Printf(
+                TEXT("Geometry binding '%s' references a StaticMeshComponent with no static mesh assigned."),
+                *Descriptor->Label);
+            return false;
+        }
+
+        const FStaticMeshRenderData* RenderData = StaticMesh->GetRenderData();
+        if (RenderData == nullptr || RenderData->LODResources.IsEmpty())
+        {
+            OutErrorMessage = FString::Printf(
+                TEXT("Geometry binding '%s' could not read render data from static mesh '%s'."),
+                *Descriptor->Label,
+                *StaticMesh->GetName());
+            return false;
+        }
+
+        const FStaticMeshLODResources& LODResources = RenderData->LODResources[0];
+        const uint32 VertexCount = LODResources.VertexBuffers.PositionVertexBuffer.GetNumVertices();
+        const int32 IndexCount = LODResources.IndexBuffer.GetNumIndices();
+        if (VertexCount <= 0 || IndexCount < 3)
+        {
+            OutErrorMessage = FString::Printf(
+                TEXT("Geometry binding '%s' did not produce any triangles from static mesh '%s'."),
+                *Descriptor->Label,
+                *StaticMesh->GetName());
+            return false;
+        }
+
+        FBridgeGeometryBindingPayload BindingPayload;
+        BindingPayload.InputId = Binding.InputId;
+        BindingPayload.SourceKind = SourceKind;
+        BindingPayload.MeshData.Positions.Reserve(static_cast<int32>(VertexCount));
+        for (uint32 VertexIndex = 0; VertexIndex < VertexCount; ++VertexIndex)
+        {
+            const FVector3f Position = LODResources.VertexBuffers.PositionVertexBuffer.VertexPosition(VertexIndex);
+            BindingPayload.MeshData.Positions.Add(FVector(Position));
+        }
+
+        const FIndexArrayView IndexArray = LODResources.IndexBuffer.GetArrayView();
+        BindingPayload.MeshData.Triangles.Reserve(IndexArray.Num());
+        for (int32 TriangleIndexIndex = 0; TriangleIndexIndex < IndexArray.Num(); ++TriangleIndexIndex)
+        {
+            BindingPayload.MeshData.Triangles.Add(static_cast<int32>(IndexArray[TriangleIndexIndex]));
+        }
+
+        BindingPayload.MeshData.RelativeTransform = MeshComponent->GetComponentTransform().GetRelativeTransform(GetComponentTransform());
+        OutBindingPayloads.Add(MoveTemp(BindingPayload));
+    }
+
+    if (OutBindingPayloads.IsEmpty())
+    {
+        return true;
+    }
+
+    FString SerializedBindingPayloads;
+    if (!BlenderBridge::SerializeGeometryBindingPayloads(OutBindingPayloads, SerializedBindingPayloads))
+    {
+        OutErrorMessage = TEXT("Failed to serialize geometry bindings for caching.");
+        return false;
+    }
+
+    OutBindingPayloadHash = FMD5::HashAnsiString(*SerializedBindingPayloads);
+    return true;
+}
+
 bool UBlenderBridgeComponent::BuildCurveOwnerData(FBridgeCurveOwnerData& OutCurveData, FString& OutCurveHash) const
 {
     OutCurveData = FBridgeCurveOwnerData();
@@ -1024,11 +1735,24 @@ bool UBlenderBridgeComponent::BuildCurveOwnerData(FBridgeCurveOwnerData& OutCurv
         return false;
     }
 
-    const USplineComponent* SplineComponent = GetBridgeSplineComponent();
+    const USplineComponent* SplineComponent = GetActiveCurveSourceSplineComponent();
+    return BuildCurveOwnerDataFromSplineComponent(SplineComponent, OutCurveData, OutCurveHash);
+}
+
+bool UBlenderBridgeComponent::BuildCurveOwnerDataFromSplineComponent(
+    const USplineComponent* SplineComponent,
+    FBridgeCurveOwnerData& OutCurveData,
+    FString& OutCurveHash) const
+{
+    OutCurveData = FBridgeCurveOwnerData();
+    OutCurveHash.Reset();
+
     if (SplineComponent == nullptr || SplineComponent->GetNumberOfSplinePoints() <= 0)
     {
         return false;
     }
+
+    const FTransform BridgeTransform = GetComponentTransform();
 
     OutCurveData.CurveType = EBlenderBridgeCurveType::Bezier;
     OutCurveData.bClosedLoop = SplineComponent->IsClosedLoop();
@@ -1037,9 +1761,13 @@ bool UBlenderBridgeComponent::BuildCurveOwnerData(FBridgeCurveOwnerData& OutCurv
     for (int32 PointIndex = 0; PointIndex < SplineComponent->GetNumberOfSplinePoints(); ++PointIndex)
     {
         FBridgeCurveOwnerPoint Point;
-        Point.Position = SplineComponent->GetLocationAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
-        Point.ArriveTangent = SplineComponent->GetArriveTangentAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
-        Point.LeaveTangent = SplineComponent->GetLeaveTangentAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
+        const FVector WorldPosition = SplineComponent->GetLocationAtSplinePoint(PointIndex, ESplineCoordinateSpace::World);
+        const FVector WorldArriveTangent = SplineComponent->GetArriveTangentAtSplinePoint(PointIndex, ESplineCoordinateSpace::World);
+        const FVector WorldLeaveTangent = SplineComponent->GetLeaveTangentAtSplinePoint(PointIndex, ESplineCoordinateSpace::World);
+
+        Point.Position = BridgeTransform.InverseTransformPosition(WorldPosition);
+        Point.ArriveTangent = BridgeTransform.InverseTransformVectorNoScale(WorldArriveTangent);
+        Point.LeaveTangent = BridgeTransform.InverseTransformVectorNoScale(WorldLeaveTangent);
         Point.RollDegrees = SplineComponent->GetRollAtSplinePoint(PointIndex, ESplineCoordinateSpace::Local);
         Point.Scale = SplineComponent->GetScaleAtSplinePoint(PointIndex);
         Point.Type = ToBridgeSplinePointType(SplineComponent->GetSplinePointType(PointIndex));
@@ -1056,6 +1784,7 @@ FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
     const bool bPreserveExistingSplineState)
 {
     TargetCapabilities = InCapabilities;
+    RefreshObservedSplineComponents();
 
     if (TargetCapabilities.TargetKind != EBlenderBridgeTargetKind::CurveOwner)
     {
@@ -1075,6 +1804,27 @@ FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
         return TargetCapabilities.CompatibilityMessage.IsEmpty()
             ? TEXT(" Curve-owner spline editing is unavailable for this target.")
             : FString::Printf(TEXT(" Curve-owner spline editing unavailable: %s"), *TargetCapabilities.CompatibilityMessage);
+    }
+
+    bool bUseExternalSplineBinding = false;
+    for (const FBridgeGeometryInputDescriptor& Descriptor : GeometryInputDescriptors)
+    {
+        if (Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent)
+            || Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::EmbeddedSpline))
+        {
+            bUseExternalSplineBinding = GetEffectiveGeometryBindingSourceKind(Descriptor.InputId) == EBlenderBridgeGeometrySourceKind::SplineComponent;
+            break;
+        }
+    }
+
+    if (bUseExternalSplineBinding)
+    {
+        RemoveOwnedBridgeSplineComponent();
+        ImportedCurveTargetId = InTargetId;
+        ImportedCurveHash = MakeCurveOwnerHash(TargetCapabilities.OwnerCurve);
+        bSplineEditedSinceImport = false;
+        RefreshObservedSplineComponents();
+        return TEXT(" External spline binding is active.");
     }
 
     if (EnsureBridgeSplineComponent() == nullptr)
@@ -1102,6 +1852,7 @@ FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
 
         ImportedCurveTargetId = InTargetId;
         ImportedCurveHash = ImportedHash.IsEmpty() ? IncomingCurveHash : ImportedHash;
+        RefreshObservedSplineComponents();
         return TEXT(" Imported owner curve from Blender.");
     }
 
@@ -1110,6 +1861,7 @@ FString UBlenderBridgeComponent::ApplyCurveOwnerDescription(
     {
         ImportedCurveHash = IncomingCurveHash;
     }
+    RefreshObservedSplineComponents();
     return TEXT(" Preserved local spline edits.");
 }
 
@@ -1168,6 +1920,7 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
 {
     CancelPendingSplineCook();
     CancelPendingBakedOutputVisibilitySwap();
+    UnbindSplineComponentDelegates();
     RemoveOwnedBridgeSplineComponent();
 
     if (PreviewMeshComponent != nullptr)
@@ -1178,6 +1931,8 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     AvailableTargets.Reset();
     SchemaTargetId.Reset();
     InputSchema.Reset();
+    GeometryInputDescriptors.Reset();
+    GeometryBindings.Reset();
     TargetCapabilities = FBridgeTargetCapabilities();
     TargetDisplayLabel.Reset();
     LastCookedMaterialSlots.Reset();
@@ -1191,6 +1946,8 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     ImportedCurveTargetId.Reset();
     ImportedCurveHash.Reset();
     bSplineEditedSinceImport = false;
+    ObservedGeometryDebugSummary = TEXT("No observed reference actors.");
+    LastObservedGeometryEvent.Reset();
     InputValues = FInstancedPropertyBag();
 
     if (bClearTargetSelection)

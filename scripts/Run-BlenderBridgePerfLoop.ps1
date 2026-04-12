@@ -29,7 +29,7 @@ function Get-Median {
     $sorted = $Values | Sort-Object
     $count = $sorted.Count
     if (($count % 2) -eq 1) {
-        return $sorted[[int]($count / 2)]
+        return $sorted[[int][Math]::Floor($count / 2)]
     }
 
     return ($sorted[($count / 2) - 1] + $sorted[$count / 2]) / 2.0

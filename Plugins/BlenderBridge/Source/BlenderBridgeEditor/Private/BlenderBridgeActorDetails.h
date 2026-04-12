@@ -28,6 +28,7 @@ private:
     void BuildGenerateCategory(IDetailLayoutBuilder& DetailBuilder);
     void BuildSetupCategory(IDetailLayoutBuilder& DetailBuilder);
     void BuildParametersCategory(IDetailLayoutBuilder& DetailBuilder);
+    void BuildGeometryCategory(IDetailLayoutBuilder& DetailBuilder);
     void BuildCurveCategory(IDetailLayoutBuilder& DetailBuilder);
     void BuildMaterialsCategory(IDetailLayoutBuilder& DetailBuilder);
     void BuildBakeCategory(IDetailLayoutBuilder& DetailBuilder);
@@ -67,7 +68,9 @@ private:
     bool IsSingleSelection() const;
     bool HasSelectedActors() const;
     bool AnySelectedActorsHaveBakedOutput() const;
+    bool ShouldShowGeometryCategory() const;
     bool ShouldShowCurveCategory() const;
+    bool ShouldShowGeometryProperties() const;
     bool ShouldShowCurveSplineProperty() const;
     bool ShouldShowMaterialProperties() const;
     bool ShouldShowParameterProperties() const;
@@ -84,6 +87,8 @@ private:
     EVisibility GetSetupHintVisibility() const;
     EVisibility GetParametersHintVisibility() const;
     EVisibility GetParametersPropertyVisibility() const;
+    EVisibility GetGeometryHintVisibility() const;
+    EVisibility GetGeometryPropertiesVisibility() const;
     EVisibility GetCurveHintVisibility() const;
     EVisibility GetCurveSplinePropertyVisibility() const;
     EVisibility GetMaterialsHintVisibility() const;
@@ -105,6 +110,7 @@ private:
     FText GetMultiSelectionSummaryText() const;
     FText GetSetupHintText() const;
     FText GetParametersHintText() const;
+    FText GetGeometryHintText() const;
     FText GetCurveHintText() const;
     FText GetMaterialsHintText() const;
     FText GetBakeModeDescriptionText() const;

@@ -3,9 +3,11 @@
 #include "BlenderBridgeProtocol.h"
 #include "Containers/Ticker.h"
 #include "Components/SceneComponent.h"
+#include "Engine/EngineTypes.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/Actor.h"
 #include "StructUtils/PropertyBag.h"
+#include "UObject/ObjectKey.h"
 #include "UObject/NoExportTypes.h"
 
 #include "BlenderBridgeComponent.generated.h"
@@ -15,6 +17,7 @@ class UMaterialInterface;
 class UBlenderBridgeSource;
 class UProceduralMeshComponent;
 class USplineComponent;
+class UStaticMeshComponent;
 class UStaticMesh;
 class UUserDefinedEnum;
 class FBlenderBridgeSessionManager;
@@ -70,6 +73,21 @@ struct FBlenderBridgeBakedPrototypeMeshReference
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Bake")
     TSoftObjectPtr<UStaticMesh> Mesh;
+};
+
+USTRUCT(BlueprintType)
+struct FBlenderBridgeGeometryBinding
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry")
+    FString InputId;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry")
+    EBlenderBridgeGeometrySourceKind SourceKind = EBlenderBridgeGeometrySourceKind::None;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry")
+    FComponentReference ComponentReference;
 };
 
 UCLASS(ClassGroup = (Blender), meta = (BlueprintSpawnableComponent))
@@ -156,8 +174,20 @@ public:
     UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge", meta = (DisplayName = "Bridge Build"))
     FString BridgeBuildVersion;
 
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry", meta = (DisplayName = "Observed Reference Watch"))
+    FString ObservedGeometryDebugSummary;
+
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry", meta = (DisplayName = "Last Reference Follow-Cook Event"))
+    FString LastObservedGeometryEvent;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge")
     TArray<FBridgeInputSchema> InputSchema;
+
+    UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry")
+    TArray<FBridgeGeometryInputDescriptor> GeometryInputDescriptors;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Geometry")
+    TArray<FBlenderBridgeGeometryBinding> GeometryBindings;
 
     UPROPERTY(Transient, VisibleAnywhere, BlueprintReadOnly, Category = "Blender Bridge|Spline")
     FBridgeTargetCapabilities TargetCapabilities;
@@ -192,6 +222,7 @@ public:
 protected:
     virtual void OnRegister() override;
     virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
+    virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 #if WITH_EDITOR
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -203,18 +234,31 @@ private:
     void RefreshComponentHandle();
     void BindSplineComponentDelegates();
     void UnbindSplineComponentDelegates();
+#if WITH_EDITOR
+    void BindEditorObservationDelegates();
+    void UnbindEditorObservationDelegates();
+    void HandleEditorObjectMovementFinished(UObject& Object);
+#endif
     USplineComponent* GetBridgeSplineComponent() const;
     void HandleBridgeSplineChanged();
+    void HandleObservedGeometryTransformUpdated(USceneComponent* UpdatedComponent, EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport);
+    void QueueCookFromObservedGeometryChange(const TCHAR* StatusMessage);
     void QueueCookFromSplineEdit();
     void CancelPendingSplineCook();
     void RebuildInputValues(bool bPreserveExistingValues);
+    void RebuildGeometryBindings(bool bPreserveExistingValues);
     UUserDefinedEnum* GetOrCreateRuntimeEnum(const FBridgeInputSchema& Entry);
     void ResetBridgeData(bool bClearTargetSelection);
     bool BuildCurveOwnerData(FBridgeCurveOwnerData& OutCurveData, FString& OutCurveHash) const;
+    bool BuildGeometryBindingPayloads(
+        TArray<FBridgeGeometryBindingPayload>& OutBindingPayloads,
+        FString& OutBindingPayloadHash,
+        FString& OutErrorMessage) const;
     FString ApplyCurveOwnerDescription(const FString& InTargetId, const FBridgeTargetCapabilities& InCapabilities, bool bPreserveExistingSplineState);
     bool ImportCurveOwnerData(const FBridgeCurveOwnerData& InCurveData, FString& OutCurveHash);
     FString GetSourceHandle() const;
     const FBridgeTargetDescriptor* FindTargetDescriptor(const FString& InTargetId) const;
+    const FBridgeGeometryInputDescriptor* FindGeometryInputDescriptor(const FString& InInputId) const;
     void UpdateTargetDisplayLabel();
     void SetBridgeStatus(EBlenderBridgeComponentStatus NewStatus, const FString& Message);
     void SyncMaterialOverridesFromCookedSlots();
@@ -226,6 +270,19 @@ private:
     void ApplyPreviewMaterials();
     USplineComponent* EnsureBridgeSplineComponent();
     void RemoveOwnedBridgeSplineComponent();
+    void NormalizeGeometryBindings();
+    EBlenderBridgeGeometrySourceKind GetDefaultGeometryBindingSourceKind(const FBridgeGeometryInputDescriptor& Descriptor) const;
+    EBlenderBridgeGeometrySourceKind GetEffectiveGeometryBindingSourceKind(const FString& InputId) const;
+    UStaticMeshComponent* ResolveBoundStaticMeshComponent(const FString& InputId) const;
+    USplineComponent* ResolveBoundSplineComponent(const FString& InputId) const;
+    USplineComponent* GetActiveCurveSourceSplineComponent() const;
+    void RefreshObservedSplineComponents();
+    bool IsObservedGeometryObject(const UObject* Object) const;
+    FString BuildObservedGeometryDebugSummary() const;
+    bool BuildCurveOwnerDataFromSplineComponent(
+        const USplineComponent* SplineComponent,
+        FBridgeCurveOwnerData& OutCurveData,
+        FString& OutCurveHash) const;
     UMaterialInterface* FindOverrideMaterialBySlotId(const FString& SlotId) const;
     bool HasCookedMesh() const;
     bool HasBakedOutput() const;
@@ -261,4 +318,7 @@ private:
     bool bSplineEditedSinceImport = false;
     bool bSuppressSplineNotifications = false;
     bool bSuppressPostEditNotifications = false;
+    TArray<TWeakObjectPtr<USplineComponent>> ObservedSplineComponents;
+    TArray<TWeakObjectPtr<USceneComponent>> ObservedGeometryComponents;
+    TMap<FObjectKey, FTransform> ObservedGeometryComponentTransforms;
 };

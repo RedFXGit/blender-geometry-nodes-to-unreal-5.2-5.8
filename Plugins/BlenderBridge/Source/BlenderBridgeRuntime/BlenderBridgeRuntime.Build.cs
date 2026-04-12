@@ -27,9 +27,16 @@ public class BlenderBridgeRuntime : ModuleRules
                 "Json",
                 "JsonUtilities",
                 "ProceduralMeshComponent",
-                "Projects"
+                "Projects",
+                "RenderCore",
+                "RHI"
             }
         );
+
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+        }
 
         if (Target.Platform == UnrealTargetPlatform.Win64)
         {

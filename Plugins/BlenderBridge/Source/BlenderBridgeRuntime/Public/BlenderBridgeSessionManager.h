@@ -50,6 +50,7 @@ private:
     struct FTargetSchemaCache
     {
         TArray<FBridgeInputSchema> Schema;
+        TArray<FBridgeGeometryInputDescriptor> GeometryInputs;
         FBridgeTargetCapabilities Capabilities;
     };
 

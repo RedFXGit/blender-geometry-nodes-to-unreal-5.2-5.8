@@ -16,10 +16,11 @@ except ImportError as exc:
 
 try:
     import bpy  # type: ignore
-    from mathutils import Matrix, Vector  # type: ignore
+    from mathutils import Matrix, Quaternion, Vector  # type: ignore
 except ImportError:
     bpy = None
     Matrix = None
+    Quaternion = None
     Vector = None
 
 
@@ -631,9 +632,27 @@ class BridgeWorker:
                 continue
 
             for modifier in target_object.modifiers:
-                if modifier.type == "NODES" and modifier.node_group is not None:
+                if self.is_discoverable_geometry_nodes_modifier(modifier):
                     candidates.append((target_object, modifier))
         return candidates
+
+    def is_discoverable_geometry_nodes_modifier(self, modifier) -> bool:
+        if modifier is None or getattr(modifier, "type", "") != "NODES":
+            return False
+
+        node_group = getattr(modifier, "node_group", None)
+        if node_group is None:
+            return False
+
+        modifier_name = str(getattr(modifier, "name", "") or "").strip().casefold()
+        node_group_name = str(getattr(node_group, "name", "") or "").strip().casefold()
+
+        # Blender 5.x surfaces its built-in Auto Smooth as a node modifier.
+        # It is useful for shading, but should not appear as a bridge target.
+        if modifier_name == "auto smooth" and node_group_name == "auto smooth":
+            return False
+
+        return True
 
     def load_source_objects(self, blend_file: str, source_handle: str) -> BridgeLoadedSource:
         if bpy is None:
@@ -760,15 +779,57 @@ class BridgeWorker:
         if modifier is None or modifier.node_group is None:
             return False
 
+        geometry_item = self.find_owner_geometry_interface_item(modifier)
+        geometry_socket_identifier = ""
+        geometry_socket_label = ""
+        if geometry_item is not None:
+            geometry_socket_identifier = str(getattr(geometry_item, "identifier", "") or "").strip()
+            geometry_socket_label = str(getattr(geometry_item, "name", "") or "").strip()
+
         for node in modifier.node_group.nodes:
             if getattr(node, "bl_idname", "") != "NodeGroupInput":
                 continue
 
             for output in node.outputs:
-                if getattr(output, "name", "") == "Geometry" and len(output.links) > 0:
+                if len(output.links) <= 0:
+                    continue
+
+                socket_identifier = str(getattr(output, "identifier", "") or "").strip()
+                socket_name = str(getattr(output, "name", "") or "").strip()
+                socket_bl_idname = str(getattr(output, "bl_idname", "") or "").strip()
+                socket_type = str(getattr(output, "type", "") or "").strip()
+                is_geometry_socket = (
+                    socket_bl_idname == "NodeSocketGeometry"
+                    or socket_type.upper() == "GEOMETRY"
+                    or socket_identifier == geometry_socket_identifier
+                )
+                if not is_geometry_socket:
+                    continue
+
+                if geometry_socket_identifier and socket_identifier == geometry_socket_identifier:
+                    return True
+                if geometry_socket_label and socket_name == geometry_socket_label:
+                    return True
+                if not geometry_socket_identifier and not geometry_socket_label:
                     return True
 
         return False
+
+    def find_owner_geometry_interface_item(self, modifier):
+        if modifier is None or modifier.node_group is None:
+            return None
+
+        for item in modifier.node_group.interface.items_tree:
+            if getattr(item, "item_type", "") != "SOCKET":
+                continue
+            if getattr(item, "in_out", "") != "INPUT":
+                continue
+
+            socket_type = str(getattr(item, "socket_type", "") or "")
+            if socket_type == "NodeSocketGeometry" or socket_type.startswith("NodeSocketGeometry"):
+                return item
+
+        return None
 
     def export_curve_owner_snapshot(self, target_object) -> dict[str, object]:
         curve_data = getattr(target_object, "data", None)
@@ -844,9 +905,41 @@ class BridgeWorker:
         capabilities["owner_curve"] = self.export_curve_owner_snapshot(target_object)
         return capabilities
 
+    def build_geometry_input_descriptors(self, target_object, modifier, capabilities: dict[str, object]) -> list[dict[str, object]]:
+        if target_object is None or modifier is None or modifier.node_group is None:
+            return []
+
+        if not self.does_modifier_use_owner_geometry(modifier):
+            return []
+
+        geometry_item = self.find_owner_geometry_interface_item(modifier)
+        if geometry_item is None:
+            return []
+
+        object_type = str(getattr(target_object, "type", "") or "")
+        allowed_source_kinds: list[str] = []
+        if object_type == "MESH":
+            allowed_source_kinds.append("static_mesh_component")
+        elif object_type == "CURVE" and bool(capabilities.get("supports_curve_owner", False)):
+            allowed_source_kinds.extend(["embedded_spline", "spline_component"])
+
+        if not allowed_source_kinds:
+            return []
+
+        input_id = str(getattr(geometry_item, "identifier", "") or "").strip() or "Input_0"
+        label = str(getattr(geometry_item, "name", "") or "").strip() or "Base geometry"
+        return [
+            {
+                "input_id": input_id,
+                "label": label,
+                "uses_owner_geometry": True,
+                "allowed_source_kinds": allowed_source_kinds,
+            }
+        ]
+
     def resolve_component_target(self, source_state: BridgeLoadedSource, target_descriptor: dict[str, object], target_object, component_handle: str):
         if not component_handle:
-            raise RuntimeError("component_handle is required for curve-owner targets")
+            raise RuntimeError("component_handle is required for component-local geometry overrides")
 
         state_key = self.make_component_state_key(source_state.source_handle, component_handle)
         existing_state = self.component_states.get(state_key)
@@ -932,6 +1025,98 @@ class BridgeWorker:
 
         target_object.update_tag()
 
+    def get_unreal_conversion_matrix(self):
+        if Matrix is None:
+            raise RuntimeError("mathutils.Matrix is unavailable")
+
+        return Matrix(
+            (
+                (100.0, 0.0, 0.0, 0.0),
+                (0.0, -100.0, 0.0, 0.0),
+                (0.0, 0.0, 100.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+            )
+        )
+
+    def convert_unreal_transform_to_matrix(self, transform_payload: dict | None):
+        if Matrix is None or Quaternion is None or Vector is None:
+            raise RuntimeError("mathutils transform helpers are unavailable")
+
+        normalized_transform = transform_payload if isinstance(transform_payload, dict) else {}
+        translation = Vector(tuple(to_float_list(normalized_transform.get("translation", (0.0, 0.0, 0.0)), 3, 0.0)))
+        rotation_values = to_float_list(normalized_transform.get("rotation", (0.0, 0.0, 0.0, 1.0)), 4, 0.0)
+        rotation = Quaternion((rotation_values[3], rotation_values[0], rotation_values[1], rotation_values[2]))
+        scale = Vector(tuple(to_float_list(normalized_transform.get("scale3d", (1.0, 1.0, 1.0)), 3, 1.0)))
+        unreal_matrix = Matrix.LocRotScale(translation, rotation, scale)
+        conversion = self.get_unreal_conversion_matrix()
+        return conversion.inverted() @ unreal_matrix @ conversion
+
+    def apply_mesh_owner_geometry_payload(self, target_object, mesh_payload: dict) -> None:
+        if bpy is None:
+            raise RuntimeError("Mesh owner-geometry payload application requires Blender's bpy module")
+        if target_object is None or getattr(target_object, "type", "") != "MESH":
+            raise RuntimeError("Mesh owner-geometry bindings require a mesh target object")
+
+        mesh_data = getattr(target_object, "data", None)
+        if mesh_data is None or not isinstance(mesh_data, bpy.types.Mesh):
+            raise RuntimeError("Mesh owner-geometry target does not have writable mesh data")
+
+        raw_positions = mesh_payload.get("positions", []) if isinstance(mesh_payload, dict) else []
+        raw_triangles = mesh_payload.get("triangles", []) if isinstance(mesh_payload, dict) else []
+
+        positions = np.asarray(raw_positions, dtype=np.float32)
+        if positions.ndim != 1 or positions.size == 0 or positions.size % 3 != 0:
+            raise RuntimeError("Mesh owner-geometry payload must include a flat positions array with XYZ triplets")
+
+        triangles = np.asarray(raw_triangles, dtype=np.int32)
+        if triangles.ndim != 1 or triangles.size < 3 or triangles.size % 3 != 0:
+            raise RuntimeError("Mesh owner-geometry payload must include triangle indices in groups of three")
+
+        positions = positions.reshape((-1, 3))
+        vertex_count = positions.shape[0]
+        if np.any(triangles < 0) or np.any(triangles >= vertex_count):
+            raise RuntimeError("Mesh owner-geometry payload contains triangle indices outside the vertex range")
+
+        positions = np.ascontiguousarray(positions, dtype=np.float32)
+        positions[:, 0] *= 0.01
+        positions[:, 1] *= -0.01
+        positions[:, 2] *= 0.01
+
+        relative_transform = self.convert_unreal_transform_to_matrix(mesh_payload.get("transform", {}))
+        local_space_transform = target_object.matrix_world.inverted_safe() @ relative_transform
+        linear_matrix = np.array(local_space_transform.to_3x3(), dtype=np.float32)
+        translation = np.array(local_space_transform.to_translation(), dtype=np.float32)
+        positions = positions @ linear_matrix.T
+        positions += translation
+
+        face_indices = triangles.reshape((-1, 3)).tolist()
+        vertex_positions = [tuple(vertex) for vertex in positions.tolist()]
+
+        mesh_data.clear_geometry()
+        mesh_data.from_pydata(vertex_positions, [], face_indices)
+        mesh_data.update()
+        target_object.update_tag()
+
+    def apply_geometry_binding_payloads(self, target_object, geometry_bindings_payload: list[dict[str, object]]) -> None:
+        if not isinstance(geometry_bindings_payload, list):
+            return
+
+        for binding_payload in geometry_bindings_payload:
+            if not isinstance(binding_payload, dict):
+                continue
+
+            source_kind = str(binding_payload.get("source_kind", "") or "").strip().lower()
+            if source_kind == "static_mesh_component":
+                mesh_payload = binding_payload.get("mesh", {})
+                if not isinstance(mesh_payload, dict):
+                    raise RuntimeError("Static mesh geometry binding is missing mesh payload data")
+                self.apply_mesh_owner_geometry_payload(target_object, mesh_payload)
+            elif source_kind in {"embedded_spline", "spline_component"}:
+                curve_payload = binding_payload.get("curve", {})
+                if not isinstance(curve_payload, dict):
+                    raise RuntimeError("Spline geometry binding is missing curve payload data")
+                self.apply_curve_owner_payload(target_object, curve_payload)
+
     def build_geometry_nodes_schema_for_target(self, modifier) -> list[dict[str, object]]:
         if modifier is None or modifier.node_group is None:
             return []
@@ -1006,6 +1191,7 @@ class BridgeWorker:
         target_id = str(payload.get("target_id") or "").strip()
         _source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
         capabilities = self.build_target_capabilities(target_object, modifier)
+        geometry_inputs = self.build_geometry_input_descriptors(target_object, modifier, capabilities)
 
         self.send_for_request(
             "TargetDescription",
@@ -1013,6 +1199,7 @@ class BridgeWorker:
             source_handle=source_handle,
             target_id=target_id,
             schema=self.build_geometry_nodes_schema_for_target(modifier),
+            geometry_inputs=geometry_inputs,
             object_name=target_object.name,
             modifier_name=modifier.name,
             **capabilities,
@@ -1110,6 +1297,24 @@ class BridgeWorker:
             return (type(value).__name__, int(value.as_pointer()))
         except (AttributeError, TypeError, ValueError):
             return None
+
+    def get_mesh_cache_key(self, mesh):
+        cache_key = self.get_cache_key(mesh)
+        if cache_key is None or bpy is None or mesh is None or not isinstance(mesh, bpy.types.Mesh):
+            return cache_key
+
+        # `Object.to_mesh()` returns temporary evaluated meshes whose pointers are
+        # often recycled across different source objects. Only cache when the mesh
+        # pointer resolves back to the same registered datablock in `bpy.data`.
+        mesh_name = str(getattr(mesh, "name", "") or "").strip()
+        if not mesh_name:
+            return None
+
+        registered_mesh = bpy.data.meshes.get(mesh_name)
+        if registered_mesh is None or self.get_cache_key(registered_mesh) != cache_key:
+            return None
+
+        return cache_key
 
     def make_material_slot_id(self, slot_name: str, material_name: str, slot_index: int) -> str:
         slot_name = str(slot_name or "").strip()
@@ -1364,14 +1569,7 @@ class BridgeWorker:
             raise RuntimeError("mathutils.Matrix is unavailable")
 
         resolved_transform = transform_matrix.copy() if transform_matrix is not None else Matrix.Identity(4)
-        conversion = Matrix(
-            (
-                (100.0, 0.0, 0.0, 0.0),
-                (0.0, -100.0, 0.0, 0.0),
-                (0.0, 0.0, 100.0, 0.0),
-                (0.0, 0.0, 0.0, 1.0),
-            )
-        )
+        conversion = self.get_unreal_conversion_matrix()
         converted_transform = conversion @ resolved_transform @ conversion.inverted()
         location, rotation, scale = converted_transform.decompose()
         normalized_rotation = rotation.normalized()
@@ -2041,11 +2239,11 @@ class BridgeWorker:
                         )
                         if evaluated_mesh is not None:
                             try:
-                                mesh_cache_key = self.get_cache_key(evaluated_mesh)
+                                mesh_cache_key = self.get_mesh_cache_key(evaluated_mesh)
                                 extracted_buffers = self.extract_local_render_buffers_for_mesh(
                                     evaluated_mesh,
                                     extract_timings,
-                                    mesh_buffer_cache,
+                                    mesh_buffer_cache if mesh_cache_key is not None else None,
                                 )
                                 if extracted_buffers is not None:
                                     preview_mesh_payload = self.build_preview_mesh_payload(
@@ -2087,8 +2285,12 @@ class BridgeWorker:
         render_parts = []
         mesh = getattr(geometry, "mesh", None)
         if mesh is not None:
-            mesh_cache_key = self.get_cache_key(mesh)
-            extracted_buffers = self.extract_local_render_buffers_for_mesh(mesh, extract_timings, mesh_buffer_cache)
+            mesh_cache_key = self.get_mesh_cache_key(mesh)
+            extracted_buffers = self.extract_local_render_buffers_for_mesh(
+                mesh,
+                extract_timings,
+                mesh_buffer_cache if mesh_cache_key is not None else None,
+            )
             if extracted_buffers is not None:
                 preview_mesh_payload = self.build_preview_mesh_payload(
                     extracted_buffers,
@@ -2418,11 +2620,14 @@ class BridgeWorker:
         curve_payload = payload.get("owner_curve", {})
         if not isinstance(curve_payload, dict):
             curve_payload = {}
+        geometry_bindings_payload = payload.get("geometry_bindings", [])
+        if not isinstance(geometry_bindings_payload, list):
+            geometry_bindings_payload = []
 
         resolve_start_time = time.perf_counter()
         source_state, target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
         capabilities = self.build_target_capabilities(target_object, modifier)
-        if bool(capabilities.get("supports_curve_owner", False)):
+        if bool(capabilities.get("supports_curve_owner", False)) or len(geometry_bindings_payload) > 0:
             working_object, working_modifier = self.resolve_component_target(
                 source_state,
                 target_descriptor,
@@ -2434,7 +2639,10 @@ class BridgeWorker:
         resolve_end_time = time.perf_counter()
 
         inputs_start_time = time.perf_counter()
-        if bool(capabilities.get("supports_curve_owner", False)):
+        if geometry_bindings_payload:
+            self.apply_geometry_binding_payloads(target_object, geometry_bindings_payload)
+            self.apply_geometry_nodes_inputs(target_object, modifier, values)
+        elif bool(capabilities.get("supports_curve_owner", False)):
             self.apply_curve_owner_payload(target_object, curve_payload)
             self.apply_geometry_nodes_inputs(target_object, modifier, values)
         else:
@@ -2526,11 +2734,14 @@ class BridgeWorker:
         curve_payload = payload.get("owner_curve", {})
         if not isinstance(curve_payload, dict):
             curve_payload = {}
+        geometry_bindings_payload = payload.get("geometry_bindings", [])
+        if not isinstance(geometry_bindings_payload, list):
+            geometry_bindings_payload = []
 
         resolve_start_time = time.perf_counter()
         source_state, target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
         capabilities = self.build_target_capabilities(target_object, modifier)
-        if bool(capabilities.get("supports_curve_owner", False)):
+        if bool(capabilities.get("supports_curve_owner", False)) or len(geometry_bindings_payload) > 0:
             working_object, working_modifier = self.resolve_component_target(
                 source_state,
                 target_descriptor,
@@ -2542,7 +2753,10 @@ class BridgeWorker:
         resolve_end_time = time.perf_counter()
 
         inputs_start_time = time.perf_counter()
-        if bool(capabilities.get("supports_curve_owner", False)):
+        if geometry_bindings_payload:
+            self.apply_geometry_binding_payloads(target_object, geometry_bindings_payload)
+            self.apply_geometry_nodes_inputs(target_object, modifier, values)
+        elif bool(capabilities.get("supports_curve_owner", False)):
             self.apply_curve_owner_payload(target_object, curve_payload)
             self.apply_geometry_nodes_inputs(target_object, modifier, values)
         else:

@@ -410,6 +410,7 @@ namespace
         const TArray<FBridgeInputSchema>& Schema,
         const FInstancedPropertyBag& InputValues,
         const FString& CurveHash,
+        const FString& GeometryBindingsHash,
         FString& OutCookCacheKey)
     {
         OutCookCacheKey.Reset();
@@ -429,14 +430,16 @@ namespace
         }
 
         OutCookCacheKey = FString::Printf(
-            TEXT("%s%s%s%s%s%s%s"),
+            TEXT("%s%s%s%s%s%s%s%s%s"),
             *SourceHandle,
             CacheKeyDelimiter,
             *TargetId,
             CacheKeyDelimiter,
             *SerializedValuesPayload,
             CacheKeyDelimiter,
-            *CurveHash);
+            *CurveHash,
+            CacheKeyDelimiter,
+            *GeometryBindingsHash);
         return true;
     }
 
@@ -781,7 +784,9 @@ void FBlenderBridgeSessionManager::NotifyTargetChanged(UBlenderBridgeComponent* 
     Component->CancelPendingSplineCook();
     Component->SchemaTargetId.Reset();
     Component->InputSchema.Reset();
-    Component->TargetCapabilities = FBridgeTargetCapabilities();
+    Component->GeometryInputDescriptors.Reset();
+    Component->GeometryBindings.Reset();
+    Component->ApplyCurveOwnerDescription(Component->TargetId, FBridgeTargetCapabilities(), false);
     Component->RebuildInputValues(false);
     Component->UpdateTargetDisplayLabel();
     if (Component->PreviewMeshComponent != nullptr)
@@ -945,8 +950,23 @@ const FBridgeDecodedInstanceBake* FBlenderBridgeSessionManager::FindCachedInstan
         }
     }
 
+    TArray<FBridgeGeometryBindingPayload> GeometryBindingPayloads;
+    FString GeometryBindingsHash;
+    FString GeometryBindingsError;
+    if (!Component->BuildGeometryBindingPayloads(GeometryBindingPayloads, GeometryBindingsHash, GeometryBindingsError))
+    {
+        return nullptr;
+    }
+
     FString CookCacheKey;
-    if (!BuildCookCacheKey(Component->GetSourceHandle(), Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, CookCacheKey))
+    if (!BuildCookCacheKey(
+            Component->GetSourceHandle(),
+            Component->TargetId,
+            Component->InputSchema,
+            Component->InputValues,
+            CurveHash,
+            GeometryBindingsHash,
+            CookCacheKey))
     {
         return nullptr;
     }
@@ -1152,20 +1172,29 @@ void FBlenderBridgeSessionManager::HandleSessionMessageReceived(const FBlenderBr
 
         FBridgeTargetCapabilities Capabilities;
         BlenderBridge::ParseTargetCapabilities(Message.Payload, Capabilities);
+        TArray<FBridgeGeometryInputDescriptor> GeometryDescriptors;
+        BlenderBridge::ParseGeometryInputDescriptors(Message.Payload, GeometryDescriptors);
 
         Component->InputSchema = MoveTemp(Schema);
+        Component->GeometryInputDescriptors = MoveTemp(GeometryDescriptors);
         Component->SchemaTargetId = TargetId;
         Component->RebuildInputValues(PendingRequest.bPreserveInputValues);
+        Component->RebuildGeometryBindings(PendingRequest.bPreserveInputValues);
         const FString CurveOwnerStatus = Component->ApplyCurveOwnerDescription(TargetId, Capabilities, PendingRequest.bPreserveInputValues);
         if (!PendingRequest.SourceHandle.IsEmpty() && !TargetId.IsEmpty())
         {
             FTargetSchemaCache& CachedSchema = TargetSchemaCaches.FindOrAdd(MakeTargetSchemaCacheKey(PendingRequest.SourceHandle, TargetId));
             CachedSchema.Schema = Component->InputSchema;
+            CachedSchema.GeometryInputs = Component->GeometryInputDescriptors;
             CachedSchema.Capabilities = Capabilities;
         }
         Component->SetBridgeStatus(
             EBlenderBridgeComponentStatus::Ready,
-            FString::Printf(TEXT("Ready. Received %d bridge inputs.%s"), Component->InputSchema.Num(), *CurveOwnerStatus));
+            FString::Printf(
+                TEXT("Ready. Received %d bridge inputs and %d geometry binding target(s).%s"),
+                Component->InputSchema.Num(),
+                Component->GeometryInputDescriptors.Num(),
+                *CurveOwnerStatus));
 
         if (PendingRequest.bRequestCookAfterDescribe)
         {
@@ -1567,12 +1596,18 @@ bool FBlenderBridgeSessionManager::TryApplyCachedTargetDescription(
     }
 
     Component->InputSchema = CachedSchema->Schema;
+    Component->GeometryInputDescriptors = CachedSchema->GeometryInputs;
     Component->SchemaTargetId = Component->TargetId;
     Component->RebuildInputValues(bPreserveInputValues);
+    Component->RebuildGeometryBindings(bPreserveInputValues);
     const FString CurveOwnerStatus = Component->ApplyCurveOwnerDescription(Component->TargetId, CachedSchema->Capabilities, bPreserveInputValues);
     Component->SetBridgeStatus(
         EBlenderBridgeComponentStatus::Ready,
-        FString::Printf(TEXT("Ready. Reused %d cached bridge inputs.%s"), Component->InputSchema.Num(), *CurveOwnerStatus));
+        FString::Printf(
+            TEXT("Ready. Reused %d cached bridge inputs and %d geometry binding target(s).%s"),
+            Component->InputSchema.Num(),
+            Component->GeometryInputDescriptors.Num(),
+            *CurveOwnerStatus));
 
     if (bRequestCookAfterDescribe)
     {
@@ -1609,8 +1644,23 @@ bool FBlenderBridgeSessionManager::TryApplyCachedCook(UBlenderBridgeComponent* C
         }
     }
 
+    TArray<FBridgeGeometryBindingPayload> GeometryBindingPayloads;
+    FString GeometryBindingsHash;
+    FString GeometryBindingsError;
+    if (!Component->BuildGeometryBindingPayloads(GeometryBindingPayloads, GeometryBindingsHash, GeometryBindingsError))
+    {
+        return false;
+    }
+
     FString CookCacheKey;
-    if (!BuildCookCacheKey(Component->GetSourceHandle(), Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, CookCacheKey))
+    if (!BuildCookCacheKey(
+            Component->GetSourceHandle(),
+            Component->TargetId,
+            Component->InputSchema,
+            Component->InputValues,
+            CurveHash,
+            GeometryBindingsHash,
+            CookCacheKey))
     {
         return false;
     }
@@ -1706,7 +1756,9 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
             Component->CancelPendingSplineCook();
             Component->SchemaTargetId.Reset();
             Component->InputSchema.Reset();
-            Component->TargetCapabilities = FBridgeTargetCapabilities();
+            Component->GeometryInputDescriptors.Reset();
+            Component->GeometryBindings.Reset();
+            Component->ApplyCurveOwnerDescription(Component->TargetId, FBridgeTargetCapabilities(), false);
             Component->RebuildInputValues(false);
             if (Component->PreviewMeshComponent != nullptr)
             {
@@ -1718,7 +1770,9 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
         {
             Component->SchemaTargetId.Reset();
             Component->InputSchema.Reset();
-            Component->TargetCapabilities = FBridgeTargetCapabilities();
+            Component->GeometryInputDescriptors.Reset();
+            Component->GeometryBindings.Reset();
+            Component->ApplyCurveOwnerDescription(Component->TargetId, FBridgeTargetCapabilities(), false);
             Component->RebuildInputValues(false);
             if (Component->PreviewMeshComponent != nullptr)
             {
@@ -1732,7 +1786,9 @@ void FBlenderBridgeSessionManager::ApplySourceCacheToComponents(
         {
             Component->SchemaTargetId.Reset();
             Component->InputSchema.Reset();
-            Component->TargetCapabilities = FBridgeTargetCapabilities();
+            Component->GeometryInputDescriptors.Reset();
+            Component->GeometryBindings.Reset();
+            Component->ApplyCurveOwnerDescription(Component->TargetId, FBridgeTargetCapabilities(), false);
             Component->RebuildInputValues(false);
             if (Component->PreviewMeshComponent != nullptr)
             {
@@ -2013,9 +2069,18 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
         {
             Component->SetBridgeStatus(
                 EBlenderBridgeComponentStatus::Error,
-                TEXT("Curve-owner target requires a valid embedded Unreal spline before it can cook."));
+                TEXT("Curve-owner target requires a valid spline source before it can cook."));
             return false;
         }
+    }
+
+    TArray<FBridgeGeometryBindingPayload> GeometryBindingPayloads;
+    FString GeometryBindingsHash;
+    FString GeometryBindingsError;
+    if (!Component->BuildGeometryBindingPayloads(GeometryBindingPayloads, GeometryBindingsHash, GeometryBindingsError))
+    {
+        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, GeometryBindingsError);
+        return false;
     }
 
     if (TryApplyCachedCook(Component))
@@ -2036,6 +2101,10 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
         Payload->SetStringField(CurveHashFieldName, CurveHash);
         BlenderBridge::AddCurveOwnerDataToPayload(CurveOwnerData, Payload);
     }
+    if (!GeometryBindingPayloads.IsEmpty())
+    {
+        BlenderBridge::AddGeometryBindingPayloadsToPayload(GeometryBindingPayloads, Payload);
+    }
 
     FPendingRequest PendingRequest;
     PendingRequest.Kind = EBridgeManagerRequestKind::CookTarget;
@@ -2046,7 +2115,14 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
     PendingRequest.ScenarioId = Component->GetAutomationScenarioId();
     PendingRequest.ActionKind = Component->GetAutomationActionKind();
     PendingRequest.IterationIndex = Component->GetAutomationIterationIndex();
-    BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, PendingRequest.CookCacheKey);
+    BuildCookCacheKey(
+        SourceHandle,
+        Component->TargetId,
+        Component->InputSchema,
+        Component->InputValues,
+        CurveHash,
+        GeometryBindingsHash,
+        PendingRequest.CookCacheKey);
     PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
@@ -2137,9 +2213,19 @@ bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeCompone
             Component->bPendingInstancedBake = false;
             Component->SetBridgeStatus(
                 EBlenderBridgeComponentStatus::Error,
-                TEXT("Curve-owner target requires a valid embedded Unreal spline before it can bake instances."));
+                TEXT("Curve-owner target requires a valid spline source before it can bake instances."));
             return false;
         }
+    }
+
+    TArray<FBridgeGeometryBindingPayload> GeometryBindingPayloads;
+    FString GeometryBindingsHash;
+    FString GeometryBindingsError;
+    if (!Component->BuildGeometryBindingPayloads(GeometryBindingPayloads, GeometryBindingsHash, GeometryBindingsError))
+    {
+        Component->bPendingInstancedBake = false;
+        Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Error, GeometryBindingsError);
+        return false;
     }
 
     Component->RefreshComponentHandle();
@@ -2155,6 +2241,10 @@ bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeCompone
         Payload->SetStringField(CurveHashFieldName, CurveHash);
         BlenderBridge::AddCurveOwnerDataToPayload(CurveOwnerData, Payload);
     }
+    if (!GeometryBindingPayloads.IsEmpty())
+    {
+        BlenderBridge::AddGeometryBindingPayloadsToPayload(GeometryBindingPayloads, Payload);
+    }
 
     FPendingRequest PendingRequest;
     PendingRequest.Kind = EBridgeManagerRequestKind::RequestInstanceBake;
@@ -2165,7 +2255,14 @@ bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeCompone
     PendingRequest.ScenarioId = Component->GetAutomationScenarioId();
     PendingRequest.ActionKind = Component->GetAutomationActionKind();
     PendingRequest.IterationIndex = Component->GetAutomationIterationIndex();
-    BuildCookCacheKey(SourceHandle, Component->TargetId, Component->InputSchema, Component->InputValues, CurveHash, PendingRequest.CookCacheKey);
+    BuildCookCacheKey(
+        SourceHandle,
+        Component->TargetId,
+        Component->InputSchema,
+        Component->InputValues,
+        CurveHash,
+        GeometryBindingsHash,
+        PendingRequest.CookCacheKey);
     PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 

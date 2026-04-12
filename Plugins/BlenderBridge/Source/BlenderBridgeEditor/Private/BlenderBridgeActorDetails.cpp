@@ -5,6 +5,7 @@
 #include "BlenderBridgeRuntimeModule.h"
 #include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSource.h"
+#include "Components/SplineComponent.h"
 #include "DetailCategoryBuilder.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
@@ -29,6 +30,7 @@ namespace
     constexpr int32 GenerateSortOrder = -190;
     constexpr int32 SetupSortOrder = -180;
     constexpr int32 ParametersSortOrder = -170;
+    constexpr int32 GeometrySortOrder = -165;
     constexpr int32 CurveSortOrder = -160;
     constexpr int32 MaterialsSortOrder = -150;
     constexpr int32 BakeSortOrder = -140;
@@ -92,6 +94,158 @@ namespace
             return FLinearColor(0.60f, 0.60f, 0.60f);
         }
     }
+
+    const FBlenderBridgeGeometryBinding* FindGeometryBinding(const UBlenderBridgeComponent* BridgeComponent, const FString& InputId)
+    {
+        if (BridgeComponent == nullptr)
+        {
+            return nullptr;
+        }
+
+        return BridgeComponent->GeometryBindings.FindByPredicate([&InputId](const FBlenderBridgeGeometryBinding& Binding)
+        {
+            return Binding.InputId == InputId;
+        });
+    }
+
+    bool DescriptorSupportsSplineBinding(const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        return Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::EmbeddedSpline)
+            || Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent);
+    }
+
+    bool DescriptorSupportsActorOverride(const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        return Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+            || Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent);
+    }
+
+    template <typename ComponentType>
+    ComponentType* ResolveReferencedComponent(AActor* ContextActor, const FComponentReference& ComponentReference)
+    {
+        AActor* SearchActor = ComponentReference.OtherActor.Get();
+        if (SearchActor == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (ComponentType* DirectComponent = Cast<ComponentType>(ComponentReference.GetComponent(ContextActor)))
+        {
+            return DirectComponent;
+        }
+
+        if (ComponentType* RootComponent = Cast<ComponentType>(SearchActor->GetRootComponent()))
+        {
+            return RootComponent;
+        }
+
+        TInlineComponentArray<ComponentType*> MatchingComponents(SearchActor);
+        for (ComponentType* MatchingComponent : MatchingComponents)
+        {
+            if (MatchingComponent != nullptr)
+            {
+                return MatchingComponent;
+            }
+        }
+
+        return nullptr;
+    }
+
+    FText GetGeometryBindingDisplayName(
+        const UBlenderBridgeComponent* BridgeComponent,
+        const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        const bool bSupportsStaticMeshBinding = Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent);
+        const bool bSupportsSplineBinding = Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent);
+
+        if (bSupportsStaticMeshBinding && !bSupportsSplineBinding)
+        {
+            int32 StaticMeshBindingCount = 0;
+            if (BridgeComponent != nullptr)
+            {
+                for (const FBridgeGeometryInputDescriptor& Entry : BridgeComponent->GeometryInputDescriptors)
+                {
+                    if (Entry.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+                        && !Entry.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::SplineComponent))
+                    {
+                        ++StaticMeshBindingCount;
+                    }
+                }
+            }
+
+            if (StaticMeshBindingCount <= 1)
+            {
+                return FText::FromString(TEXT("Optional Reference Actor Override"));
+            }
+        }
+
+        if (!Descriptor.Label.IsEmpty())
+        {
+            return FText::FromString(FString::Printf(TEXT("Optional %s Actor Override"), *Descriptor.Label));
+        }
+
+        if (bSupportsSplineBinding && !bSupportsStaticMeshBinding)
+        {
+            return FText::FromString(TEXT("Optional Spline Actor Override"));
+        }
+
+        return FText::FromString(TEXT("Optional Reference Actor Override"));
+    }
+
+    bool IsExternalSplineBindingActive(const UBlenderBridgeComponent* BridgeComponent)
+    {
+        if (BridgeComponent == nullptr)
+        {
+            return false;
+        }
+
+        for (const FBridgeGeometryInputDescriptor& Descriptor : BridgeComponent->GeometryInputDescriptors)
+        {
+            if (!DescriptorSupportsSplineBinding(Descriptor))
+            {
+                continue;
+            }
+
+            if (const FBlenderBridgeGeometryBinding* Binding = FindGeometryBinding(BridgeComponent, Descriptor.InputId))
+            {
+                if (ResolveReferencedComponent<USplineComponent>(const_cast<AActor*>(BridgeComponent->GetOwner()), Binding->ComponentReference) != nullptr)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool HasValidExternalSplineBinding(const UBlenderBridgeComponent* BridgeComponent, AActor* ContextActor)
+    {
+        if (BridgeComponent == nullptr || ContextActor == nullptr)
+        {
+            return false;
+        }
+
+        for (const FBridgeGeometryInputDescriptor& Descriptor : BridgeComponent->GeometryInputDescriptors)
+        {
+            if (!DescriptorSupportsSplineBinding(Descriptor))
+            {
+                continue;
+            }
+
+            const FBlenderBridgeGeometryBinding* Binding = FindGeometryBinding(BridgeComponent, Descriptor.InputId);
+            if (Binding == nullptr)
+            {
+                continue;
+            }
+
+            if (ResolveReferencedComponent<USplineComponent>(ContextActor, Binding->ComponentReference) != nullptr)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
 
 TSharedRef<IDetailCustomization> FBlenderBridgeActorDetails::MakeInstance()
@@ -120,6 +274,7 @@ void FBlenderBridgeActorDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBu
     {
         RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, Source));
         RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, TargetId));
+        RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, GeometryBindings));
         RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, BakeOutputMode));
     }
 
@@ -321,6 +476,51 @@ void FBlenderBridgeActorDetails::BuildSetupCategory(IDetailLayoutBuilder& Detail
     AddComponentProperty(SetupCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, Source));
     AddComponentProperty(SetupCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, TargetId));
 
+    const TArray<UObject*> BridgeComponents = GetSelectedBridgeComponentObjects();
+    if (!BridgeComponents.IsEmpty())
+    {
+        const TSharedPtr<IPropertyHandle> GeometryBindingsHandle = DetailBuilder.AddObjectPropertyData(
+            BridgeComponents,
+            GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, GeometryBindings));
+        const TSharedPtr<IPropertyHandleArray> GeometryBindingsArray = GeometryBindingsHandle.IsValid()
+            ? GeometryBindingsHandle->AsArray()
+            : nullptr;
+
+        uint32 BindingCount = 0;
+        if (GeometryBindingsArray.IsValid()
+            && GeometryBindingsArray->GetNumElements(BindingCount) == FPropertyAccess::Success)
+        {
+            const UBlenderBridgeComponent* BridgeComponent = GetSingleSelectedBridgeComponent();
+            for (uint32 BindingIndex = 0; BindingIndex < BindingCount; ++BindingIndex)
+            {
+                if (BridgeComponent == nullptr || !BridgeComponent->GeometryInputDescriptors.IsValidIndex(static_cast<int32>(BindingIndex)))
+                {
+                    continue;
+                }
+
+                const FBridgeGeometryInputDescriptor& Descriptor = BridgeComponent->GeometryInputDescriptors[static_cast<int32>(BindingIndex)];
+                if (!DescriptorSupportsActorOverride(Descriptor))
+                {
+                    continue;
+                }
+
+                const TSharedRef<IPropertyHandle> BindingHandle = GeometryBindingsArray->GetElement(BindingIndex);
+                const TSharedPtr<IPropertyHandle> ComponentReferenceHandle = BindingHandle->GetChildHandle(
+                    GET_MEMBER_NAME_CHECKED(FBlenderBridgeGeometryBinding, ComponentReference));
+                const TSharedPtr<IPropertyHandle> ReferencedActorHandle = ComponentReferenceHandle.IsValid()
+                    ? ComponentReferenceHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FComponentReference, OtherActor))
+                    : nullptr;
+                if (!ReferencedActorHandle.IsValid())
+                {
+                    continue;
+                }
+
+                IDetailPropertyRow& BindingRow = SetupCategory.AddProperty(ReferencedActorHandle.ToSharedRef());
+                BindingRow.DisplayName(GetGeometryBindingDisplayName(BridgeComponent, Descriptor));
+            }
+        }
+    }
+
     AddInfoMessageRow(
         SetupCategory,
         FText::FromString(TEXT("Setup Hint")),
@@ -377,6 +577,71 @@ void FBlenderBridgeActorDetails::BuildCurveCategory(IDetailLayoutBuilder& Detail
     {
         SplineRow->DisplayName(FText::FromString(TEXT("Embedded Spline")));
         SplineRow->Visibility(TAttribute<EVisibility>::CreateSP(this, &FBlenderBridgeActorDetails::GetCurveSplinePropertyVisibility));
+    }
+}
+
+void FBlenderBridgeActorDetails::BuildGeometryCategory(IDetailLayoutBuilder& DetailBuilder)
+{
+    IDetailCategoryBuilder& GeometryCategory = DetailBuilder.EditCategory(
+        TEXT("Blender Bridge Geometry"),
+        FText::FromString(TEXT("Geometry")),
+        ECategoryPriority::TypeSpecific);
+    GeometryCategory.SetSortOrder(GeometrySortOrder);
+
+    AddInfoMessageRow(
+        GeometryCategory,
+        FText::FromString(TEXT("Geometry Hint")),
+        TAttribute<FText>::CreateSP(this, &FBlenderBridgeActorDetails::GetGeometryHintText),
+        InfoBackgroundColor,
+        TAttribute<EVisibility>::CreateSP(this, &FBlenderBridgeActorDetails::GetGeometryHintVisibility));
+
+    const TArray<UObject*> BridgeComponents = GetSelectedBridgeComponentObjects();
+    if (BridgeComponents.IsEmpty())
+    {
+        return;
+    }
+
+    const TSharedPtr<IPropertyHandle> GeometryBindingsHandle = DetailBuilder.AddObjectPropertyData(
+        BridgeComponents,
+        GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, GeometryBindings));
+    if (!GeometryBindingsHandle.IsValid())
+    {
+        return;
+    }
+
+    const TSharedPtr<IPropertyHandleArray> GeometryBindingsArray = GeometryBindingsHandle->AsArray();
+    if (!GeometryBindingsArray.IsValid())
+    {
+        return;
+    }
+
+    uint32 BindingCount = 0;
+    if (GeometryBindingsArray->GetNumElements(BindingCount) != FPropertyAccess::Success)
+    {
+        return;
+    }
+
+    const UBlenderBridgeComponent* BridgeComponent = GetSingleSelectedBridgeComponent();
+    for (uint32 BindingIndex = 0; BindingIndex < BindingCount; ++BindingIndex)
+    {
+        const TSharedRef<IPropertyHandle> BindingHandle = GeometryBindingsArray->GetElement(BindingIndex);
+        TSharedPtr<IPropertyHandle> VisibleHandle = BindingHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBlenderBridgeGeometryBinding, ComponentReference));
+        if (!VisibleHandle.IsValid())
+        {
+            VisibleHandle = BindingHandle;
+        }
+
+        IDetailPropertyRow& BindingRow = GeometryCategory.AddProperty(VisibleHandle.ToSharedRef());
+        BindingRow.ShouldAutoExpand(true);
+        BindingRow.Visibility(TAttribute<EVisibility>::CreateSP(this, &FBlenderBridgeActorDetails::GetGeometryPropertiesVisibility));
+
+        FString DisplayLabel = FString::Printf(TEXT("Geometry Binding %u"), BindingIndex + 1);
+        if (BridgeComponent != nullptr && BridgeComponent->GeometryInputDescriptors.IsValidIndex(static_cast<int32>(BindingIndex)))
+        {
+            DisplayLabel = BridgeComponent->GeometryInputDescriptors[static_cast<int32>(BindingIndex)].Label;
+        }
+
+        BindingRow.DisplayName(FText::FromString(DisplayLabel));
     }
 }
 
@@ -509,6 +774,8 @@ void FBlenderBridgeActorDetails::BuildAdvancedCategory(IDetailLayoutBuilder& Det
     AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, ComponentStatus), true);
     AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, ComponentHandle), true);
     AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, SchemaTargetId), true);
+    AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, ObservedGeometryDebugSummary), true);
+    AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, LastObservedGeometryEvent), true);
     AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, AvailableTargets), true, true);
     AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, InputSchema), true, true);
     AddComponentProperty(AdvancedCategory, GET_MEMBER_NAME_CHECKED(UBlenderBridgeComponent, TargetCapabilities), true, true);
@@ -695,8 +962,24 @@ bool FBlenderBridgeActorDetails::ShouldShowCurveCategory() const
     return false;
 }
 
+bool FBlenderBridgeActorDetails::ShouldShowGeometryCategory() const
+{
+    return false;
+}
+
+bool FBlenderBridgeActorDetails::ShouldShowGeometryProperties() const
+{
+    return false;
+}
+
 bool FBlenderBridgeActorDetails::ShouldShowCurveSplineProperty() const
 {
+    const UBlenderBridgeComponent* BridgeComponent = GetSingleSelectedBridgeComponent();
+    if (BridgeComponent == nullptr || IsExternalSplineBindingActive(BridgeComponent))
+    {
+        return false;
+    }
+
     return GetSingleSelectedActor() != nullptr && GetSingleSelectedActor()->GetBridgeSplineComponent() != nullptr;
 }
 
@@ -811,6 +1094,16 @@ EVisibility FBlenderBridgeActorDetails::GetParametersHintVisibility() const
 EVisibility FBlenderBridgeActorDetails::GetParametersPropertyVisibility() const
 {
     return ShouldShowParameterProperties() ? EVisibility::Visible : EVisibility::Collapsed;
+}
+
+EVisibility FBlenderBridgeActorDetails::GetGeometryHintVisibility() const
+{
+    return GetGeometryHintText().IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
+}
+
+EVisibility FBlenderBridgeActorDetails::GetGeometryPropertiesVisibility() const
+{
+    return ShouldShowGeometryProperties() ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
 EVisibility FBlenderBridgeActorDetails::GetCurveHintVisibility() const
@@ -1050,7 +1343,58 @@ FText FBlenderBridgeActorDetails::GetParametersHintText() const
 
     if (BridgeComponent->InputSchema.IsEmpty())
     {
+        if (!BridgeComponent->GeometryInputDescriptors.IsEmpty())
+        {
+            return FText::FromString(TEXT("This target does not expose scalar inputs. Optional reference actor overrides are available in Setup."));
+        }
+
         return FText::FromString(TEXT("This target does not expose any editable inputs."));
+    }
+
+    return FText::GetEmpty();
+}
+
+FText FBlenderBridgeActorDetails::GetGeometryHintText() const
+{
+    const UBlenderBridgeComponent* BridgeComponent = GetSingleSelectedBridgeComponent();
+    if (BridgeComponent == nullptr)
+    {
+        return FText::GetEmpty();
+    }
+
+    if (BridgeComponent->Source == nullptr || BridgeComponent->TargetId.IsEmpty())
+    {
+        return FText::FromString(TEXT("Geometry bindings appear after a source and target are selected."));
+    }
+
+    if (BridgeComponent->ComponentStatus == EBlenderBridgeComponentStatus::SchemaPending)
+    {
+        return FText::FromString(TEXT("Geometry binding options are still loading."));
+    }
+
+    if (BridgeComponent->GeometryInputDescriptors.IsEmpty())
+    {
+        return FText::FromString(TEXT("This target does not expose any bindable geometry inputs."));
+    }
+
+    const bool bSupportsStaticMeshBinding = BridgeComponent->GeometryInputDescriptors.ContainsByPredicate([](const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        return Descriptor.AllowedSourceKinds.Contains(EBlenderBridgeGeometrySourceKind::StaticMeshComponent);
+    });
+
+    const bool bSupportsSplineBinding = BridgeComponent->GeometryInputDescriptors.ContainsByPredicate([](const FBridgeGeometryInputDescriptor& Descriptor)
+    {
+        return DescriptorSupportsSplineBinding(Descriptor);
+    });
+
+    if (bSupportsStaticMeshBinding && !bSupportsSplineBinding)
+    {
+        return FText::FromString(TEXT("Pick a level StaticMeshComponent here to override owner-geometry inputs such as floorplan meshes. Leaving it empty keeps the blend file's original geometry."));
+    }
+
+    if (bSupportsSplineBinding)
+    {
+        return FText::FromString(TEXT("Leave the picker empty to use the embedded bridge spline, or assign a level spline component to override it from Unreal."));
     }
 
     return FText::GetEmpty();
@@ -1076,6 +1420,16 @@ FText FBlenderBridgeActorDetails::GetCurveHintText() const
             : FText::FromString(FString::Printf(
                 TEXT("Embedded spline editing is unavailable for this target: %s"),
                 *BridgeComponent->TargetCapabilities.CompatibilityMessage));
+    }
+
+    if (IsExternalSplineBindingActive(BridgeComponent))
+    {
+        if (HasValidExternalSplineBinding(BridgeComponent, GetSingleSelectedActor()))
+        {
+            return FText::FromString(TEXT("This target is being driven by an external spline component selected in Setup. Edit that spline in the viewport and cooks will follow its shape."));
+        }
+
+        return FText::FromString(TEXT("This target is set to use an external spline component, but the current binding is invalid. Pick a valid spline actor override in Setup to cook this target."));
     }
 
     if (!ShouldShowCurveSplineProperty())

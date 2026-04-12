@@ -74,6 +74,15 @@ enum class EBlenderBridgeBakeOutputMode : uint8
     InstancedHierarchy
 };
 
+UENUM(BlueprintType)
+enum class EBlenderBridgeGeometrySourceKind : uint8
+{
+    None,
+    StaticMeshComponent,
+    SplineComponent,
+    EmbeddedSpline
+};
+
 USTRUCT(BlueprintType)
 struct FBridgeEnumOption
 {
@@ -126,6 +135,13 @@ struct FBridgeCurveOwnerData
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
     TArray<FBridgeCurveOwnerPoint> Points;
+
+    void Reset()
+    {
+        CurveType = EBlenderBridgeCurveType::None;
+        bClosedLoop = false;
+        Points.Reset();
+    }
 };
 
 USTRUCT(BlueprintType)
@@ -216,6 +232,24 @@ struct FBridgeTargetDescriptor
 };
 
 USTRUCT(BlueprintType)
+struct FBridgeGeometryInputDescriptor
+{
+    GENERATED_BODY()
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString InputId;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    FString Label;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    bool bUsesOwnerGeometry = false;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Bridge")
+    TArray<EBlenderBridgeGeometrySourceKind> AllowedSourceKinds;
+};
+
+USTRUCT(BlueprintType)
 struct FBridgeMaterialSlotDescriptor
 {
     GENERATED_BODY()
@@ -282,6 +316,36 @@ struct FBridgeDecodedMesh
         MaterialSlots.Reset();
         Sections.Reset();
         Bounds = FBox(FVector::ZeroVector, FVector::ZeroVector);
+    }
+};
+
+struct FBridgeMeshInputData
+{
+    TArray<FVector> Positions;
+    TArray<int32> Triangles;
+    FTransform RelativeTransform = FTransform::Identity;
+
+    void Reset()
+    {
+        Positions.Reset();
+        Triangles.Reset();
+        RelativeTransform = FTransform::Identity;
+    }
+};
+
+struct FBridgeGeometryBindingPayload
+{
+    FString InputId;
+    EBlenderBridgeGeometrySourceKind SourceKind = EBlenderBridgeGeometrySourceKind::None;
+    FBridgeCurveOwnerData CurveData;
+    FBridgeMeshInputData MeshData;
+
+    void Reset()
+    {
+        InputId.Reset();
+        SourceKind = EBlenderBridgeGeometrySourceKind::None;
+        CurveData.Reset();
+        MeshData.Reset();
     }
 };
 

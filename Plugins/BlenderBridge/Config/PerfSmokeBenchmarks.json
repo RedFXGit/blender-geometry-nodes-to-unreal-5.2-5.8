@@ -1,0 +1,46 @@
+{
+  "scenarios": [
+    {
+      "id": "house_preview",
+      "display_name": "HousePreview",
+      "blend_file": "GeometryNodesFrenchHous.blend",
+      "target_id": "HouseOne|Geometry Nodes",
+      "action": "request_cook",
+      "warmup_count": 1,
+      "measure_count": 3,
+      "baseline_median_ms": 119.090,
+      "allowed_regression_percent": 15.0,
+      "allowed_regression_ms": 20.0,
+      "requires_bake_cleanup": false,
+      "use_automation_scratch_bake_root": false
+    },
+    {
+      "id": "curve_preview",
+      "display_name": "CurvePreview",
+      "blend_file": "Curve.blend",
+      "target_id": "Blenderesse_ElectricLineGenerator_V01|GeometryNodes",
+      "action": "request_cook",
+      "warmup_count": 1,
+      "measure_count": 3,
+      "baseline_median_ms": 165.385,
+      "allowed_regression_percent": 20.0,
+      "allowed_regression_ms": 40.0,
+      "requires_bake_cleanup": false,
+      "use_automation_scratch_bake_root": false
+    },
+    {
+      "id": "instances_preview",
+      "display_name": "InstancesPreview",
+      "blend_file": "Instances.blend",
+      "target_id": "BezierCurve|GeometryNodes",
+      "action": "request_cook",
+      "warmup_count": 1,
+      "measure_count": 3,
+      "baseline_median_ms": 23.349,
+      "allowed_regression_percent": 35.0,
+      "allowed_regression_ms": 8.0,
+      "requires_bake_cleanup": false,
+      "use_automation_scratch_bake_root": false
+    }
+  ]
+}

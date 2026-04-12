@@ -1,6 +1,6 @@
 # Testing The Bridge Vertical Slice
 
-This bridge is testable today as a manual smoke test. The current slice covers:
+This bridge is testable today through manual smoke coverage and lightweight editor automation smoke tests. The current slice covers:
 
 - a shared editor-global Blender session
 - multiple loaded `.blend` sources in one Blender worker
@@ -8,6 +8,7 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 - curve-owner spline import and live recook from an embedded Unreal spline component
 - live procedural preview in Unreal
 - baked static-mesh or instanced-HISM output with generated materials, shared prototype meshes, and baked actor management
+- lightweight editor automation smoke tests for core functionality and preview performance regressions
 
 ## What Is Testable Today
 
@@ -28,7 +29,32 @@ This bridge is testable today as a manual smoke test. The current slice covers:
 
 - In-place shared-memory remap without worker restart.
 - Packaged runtime bridge behavior.
-- Automated end-to-end tests.
+
+## Lightweight Automated Smoke Tests
+
+The plugin now includes two small editor automation suites:
+
+- `BlenderBridge.E2E`
+  - core functional smoke coverage for non-curve cook + static bake, curve-owner spline recook, and instanced bake shared-prototype reuse
+- `BlenderBridge.PerfSmoke`
+  - lightweight preview performance guardrails for the `house_preview`, `curve_preview`, and `instances_preview` fixtures
+
+Fast local commands:
+
+1. In-editor: `Automation RunTests BlenderBridge.E2E`
+2. In-editor: `Automation RunTests BlenderBridge.PerfSmoke`
+3. Headless combined runner:
+   `powershell -ExecutionPolicy Bypass -File scripts\Run-BlenderBridgeSmokeSuite.ps1`
+
+Optional runner flags:
+
+- `-FunctionalOnly`
+- `-PerfOnly`
+- `-SkipSync`
+- `-SkipBuild`
+- `-RunLabel smoke`
+
+The smoke runner writes a lightweight markdown summary to `BlenderBridgeSmokeLatest.md` and appends new perf-smoke raw rows to `BlenderBridgeTimingHistory.csv`.
 
 ## Local Machine Paths Discovered Here
 

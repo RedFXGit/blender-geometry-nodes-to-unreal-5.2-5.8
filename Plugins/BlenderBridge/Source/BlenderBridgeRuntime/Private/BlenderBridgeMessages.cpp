@@ -70,6 +70,26 @@ namespace
         return EBlenderBridgeSplinePointType::Curve;
     }
 
+    EBlenderBridgeGeometrySourceKind ParseGeometrySourceKind(const FString& Value)
+    {
+        if (Value.Equals(TEXT("static_mesh_component"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeGeometrySourceKind::StaticMeshComponent;
+        }
+
+        if (Value.Equals(TEXT("spline_component"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeGeometrySourceKind::SplineComponent;
+        }
+
+        if (Value.Equals(TEXT("embedded_spline"), ESearchCase::IgnoreCase))
+        {
+            return EBlenderBridgeGeometrySourceKind::EmbeddedSpline;
+        }
+
+        return EBlenderBridgeGeometrySourceKind::None;
+    }
+
     FString SplinePointTypeToString(const EBlenderBridgeSplinePointType Value)
     {
         switch (Value)
@@ -99,6 +119,22 @@ namespace
         case EBlenderBridgeCurveType::None:
         default:
             return TEXT("None");
+        }
+    }
+
+    FString GeometrySourceKindToString(const EBlenderBridgeGeometrySourceKind Value)
+    {
+        switch (Value)
+        {
+        case EBlenderBridgeGeometrySourceKind::StaticMeshComponent:
+            return TEXT("static_mesh_component");
+        case EBlenderBridgeGeometrySourceKind::SplineComponent:
+            return TEXT("spline_component");
+        case EBlenderBridgeGeometrySourceKind::EmbeddedSpline:
+            return TEXT("embedded_spline");
+        case EBlenderBridgeGeometrySourceKind::None:
+        default:
+            return TEXT("none");
         }
     }
 
@@ -287,6 +323,21 @@ namespace
     void SetScaleField(const TSharedRef<FJsonObject>& Payload, const FString& FieldName, const FVector& Value)
     {
         SetVectorField(Payload, FieldName, Value);
+    }
+
+    void SetTransformField(const TSharedRef<FJsonObject>& Payload, const FString& FieldName, const FTransform& Value)
+    {
+        TSharedRef<FJsonObject> TransformObject = MakeShared<FJsonObject>();
+        SetVectorField(TransformObject, TEXT("translation"), Value.GetTranslation());
+        TArray<TSharedPtr<FJsonValue>> RotationValues;
+        RotationValues.Reserve(4);
+        RotationValues.Add(MakeShared<FJsonValueNumber>(Value.GetRotation().X));
+        RotationValues.Add(MakeShared<FJsonValueNumber>(Value.GetRotation().Y));
+        RotationValues.Add(MakeShared<FJsonValueNumber>(Value.GetRotation().Z));
+        RotationValues.Add(MakeShared<FJsonValueNumber>(Value.GetRotation().W));
+        TransformObject->SetArrayField(TEXT("rotation"), RotationValues);
+        SetScaleField(TransformObject, TEXT("scale3d"), Value.GetScale3D());
+        Payload->SetObjectField(FieldName, TransformObject);
     }
 }
 
@@ -490,6 +541,60 @@ bool BlenderBridge::ParseTargetDescriptors(const TSharedPtr<FJsonObject>& Payloa
         if (!Target.TargetId.IsEmpty())
         {
             OutTargets.Add(MoveTemp(Target));
+        }
+    }
+
+    return true;
+}
+
+bool BlenderBridge::ParseGeometryInputDescriptors(
+    const TSharedPtr<FJsonObject>& Payload,
+    TArray<FBridgeGeometryInputDescriptor>& OutDescriptors)
+{
+    OutDescriptors.Reset();
+
+    const TArray<TSharedPtr<FJsonValue>>* DescriptorArray = nullptr;
+    if (!Payload.IsValid() || !Payload->TryGetArrayField(TEXT("geometry_inputs"), DescriptorArray) || DescriptorArray == nullptr)
+    {
+        return false;
+    }
+
+    for (const TSharedPtr<FJsonValue>& EntryValue : *DescriptorArray)
+    {
+        const TSharedPtr<FJsonObject>* EntryObject = nullptr;
+        if (!EntryValue.IsValid() || !EntryValue->TryGetObject(EntryObject) || !EntryObject || !EntryObject->IsValid())
+        {
+            continue;
+        }
+
+        FBridgeGeometryInputDescriptor Descriptor;
+        EntryObject->Get()->TryGetStringField(TEXT("input_id"), Descriptor.InputId);
+        EntryObject->Get()->TryGetStringField(TEXT("label"), Descriptor.Label);
+        EntryObject->Get()->TryGetBoolField(TEXT("uses_owner_geometry"), Descriptor.bUsesOwnerGeometry);
+
+        const TArray<TSharedPtr<FJsonValue>>* AllowedKindsArray = nullptr;
+        if (EntryObject->Get()->TryGetArrayField(TEXT("allowed_source_kinds"), AllowedKindsArray) && AllowedKindsArray != nullptr)
+        {
+            for (const TSharedPtr<FJsonValue>& AllowedKindValue : *AllowedKindsArray)
+            {
+                FString AllowedKindText;
+                if (!AllowedKindValue.IsValid() || !AllowedKindValue->TryGetString(AllowedKindText))
+                {
+                    continue;
+                }
+
+                Descriptor.AllowedSourceKinds.Add(ParseGeometrySourceKind(AllowedKindText));
+            }
+        }
+
+        if (Descriptor.Label.IsEmpty())
+        {
+            Descriptor.Label = Descriptor.InputId;
+        }
+
+        if (!Descriptor.InputId.IsEmpty())
+        {
+            OutDescriptors.Add(MoveTemp(Descriptor));
         }
     }
 
@@ -706,6 +811,63 @@ void BlenderBridge::AddCurveOwnerDataToPayload(const FBridgeCurveOwnerData& Curv
     Payload->SetObjectField(CurveOwnerFieldName, CurveOwnerObject);
 }
 
+void BlenderBridge::AddGeometryBindingPayloadsToPayload(
+    const TArray<FBridgeGeometryBindingPayload>& GeometryBindingPayloads,
+    const TSharedRef<FJsonObject>& Payload)
+{
+    TArray<TSharedPtr<FJsonValue>> BindingArray;
+    BindingArray.Reserve(GeometryBindingPayloads.Num());
+
+    for (const FBridgeGeometryBindingPayload& BindingPayload : GeometryBindingPayloads)
+    {
+        TSharedRef<FJsonObject> BindingObject = MakeShared<FJsonObject>();
+        BindingObject->SetStringField(TEXT("input_id"), BindingPayload.InputId);
+        BindingObject->SetStringField(TEXT("source_kind"), GeometrySourceKindToString(BindingPayload.SourceKind));
+
+        if (BindingPayload.SourceKind == EBlenderBridgeGeometrySourceKind::StaticMeshComponent)
+        {
+            TSharedRef<FJsonObject> MeshObject = MakeShared<FJsonObject>();
+
+            TArray<TSharedPtr<FJsonValue>> PositionArray;
+            PositionArray.Reserve(BindingPayload.MeshData.Positions.Num() * 3);
+            for (const FVector& Position : BindingPayload.MeshData.Positions)
+            {
+                PositionArray.Add(MakeShared<FJsonValueNumber>(Position.X));
+                PositionArray.Add(MakeShared<FJsonValueNumber>(Position.Y));
+                PositionArray.Add(MakeShared<FJsonValueNumber>(Position.Z));
+            }
+            MeshObject->SetArrayField(TEXT("positions"), PositionArray);
+
+            TArray<TSharedPtr<FJsonValue>> TriangleArray;
+            TriangleArray.Reserve(BindingPayload.MeshData.Triangles.Num());
+            for (const int32 TriangleIndex : BindingPayload.MeshData.Triangles)
+            {
+                TriangleArray.Add(MakeShared<FJsonValueNumber>(TriangleIndex));
+            }
+            MeshObject->SetArrayField(TEXT("triangles"), TriangleArray);
+            SetTransformField(MeshObject, TEXT("transform"), BindingPayload.MeshData.RelativeTransform);
+            BindingObject->SetObjectField(TEXT("mesh"), MeshObject);
+        }
+        else if (
+            BindingPayload.SourceKind == EBlenderBridgeGeometrySourceKind::SplineComponent
+            || BindingPayload.SourceKind == EBlenderBridgeGeometrySourceKind::EmbeddedSpline)
+        {
+            TSharedRef<FJsonObject> CurveObject = MakeShared<FJsonObject>();
+            AddCurveOwnerDataToPayload(BindingPayload.CurveData, CurveObject);
+
+            const TSharedPtr<FJsonObject>* NestedCurveObject = nullptr;
+            if (CurveObject->TryGetObjectField(CurveOwnerFieldName, NestedCurveObject) && NestedCurveObject != nullptr && NestedCurveObject->IsValid())
+            {
+                BindingObject->SetObjectField(TEXT("curve"), *NestedCurveObject);
+            }
+        }
+
+        BindingArray.Add(MakeShared<FJsonValueObject>(BindingObject));
+    }
+
+    Payload->SetArrayField(TEXT("geometry_bindings"), BindingArray);
+}
+
 bool BlenderBridge::SerializeCurveOwnerData(const FBridgeCurveOwnerData& CurveOwnerData, FString& OutSerializedJson)
 {
     TSharedRef<FJsonObject> CurveOwnerObject = MakeShared<FJsonObject>();
@@ -722,4 +884,17 @@ bool BlenderBridge::SerializeCurveOwnerData(const FBridgeCurveOwnerData& CurveOw
     using FCurveOwnerJsonWriter = TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>;
     TSharedRef<FCurveOwnerJsonWriter> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutSerializedJson);
     return FJsonSerializer::Serialize(*NestedCurveOwnerObject, Writer);
+}
+
+bool BlenderBridge::SerializeGeometryBindingPayloads(
+    const TArray<FBridgeGeometryBindingPayload>& GeometryBindingPayloads,
+    FString& OutSerializedJson)
+{
+    TSharedRef<FJsonObject> GeometryBindingsObject = MakeShared<FJsonObject>();
+    AddGeometryBindingPayloadsToPayload(GeometryBindingPayloads, GeometryBindingsObject);
+
+    OutSerializedJson.Reset();
+    using FGeometryBindingsJsonWriter = TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>;
+    TSharedRef<FGeometryBindingsJsonWriter> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&OutSerializedJson);
+    return FJsonSerializer::Serialize(GeometryBindingsObject, Writer);
 }
