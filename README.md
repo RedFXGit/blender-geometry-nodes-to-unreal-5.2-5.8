@@ -1,4 +1,4 @@
-# Blender Bridge Vertical Slice
+# Geometry Nodes Bridge Vertical Slice
 
 This repository contains a working Unreal Editor to Blender bridge prototype for Geometry Nodes driven workflows.
 
@@ -8,8 +8,8 @@ Today it can:
 - exchange control messages over a Windows named pipe
 - stream cooked mesh data through double-buffered shared memory
 - grow the shared-memory budget automatically when a cook exceeds the current slot size
-- import a `.blend` file into the Content Browser as a configured `BlenderBridgeSource` asset
-- drag a `BlenderBridgeSource` into the level to spawn a configured `BlenderBridgeActor`
+- import a `.blend` file into the Content Browser as a configured `GeometryNodesBridgeSource` asset
+- drag a `GeometryNodesBridgeSource` into the level to spawn a configured `GeometryNodesBridgeActor`
 - discover multiple Geometry Nodes targets per `.blend`
 - reflect and drive one selected Geometry Nodes target per actor, including enums and Blender interface panel groupings
 - import and drive a curve-owner spline target from Unreal when the target object is a Bezier curve with a GN modifier that consumes owner `Geometry`
@@ -20,11 +20,11 @@ Today it can:
 
 ## Current Layout
 
-- Plugin descriptor: `Plugins/BlenderBridge/BlenderBridge.uplugin`
-- Runtime module: `Plugins/BlenderBridge/Source/BlenderBridgeRuntime`
-- Editor module: `Plugins/BlenderBridge/Source/BlenderBridgeEditor`
-- Blender worker: `Plugins/BlenderBridge/Scripts/bridge_server.py`
-- Sync helpers: `scripts/Sync-BlenderBridgeToProject.ps1` and `scripts/Watch-BlenderBridgeToProject.ps1`
+- Plugin descriptor: `Plugins/GeometryNodesBridge/GeometryNodesBridge.uplugin`
+- Runtime module: `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime`
+- Editor module: `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor`
+- Blender worker: `Plugins/GeometryNodesBridge/Scripts/geometry_nodes_bridge_server.py`
+- Sync helpers: `scripts/Sync-GeometryNodesBridgeToProject.ps1` and `scripts/Watch-GeometryNodesBridgeToProject.ps1`
 - Consolidated agent/status/testing guide: `AGENTS.md`
 
 ## What The Current Slice Proves
@@ -46,15 +46,15 @@ Today it can:
 
 ## Unreal Usage
 
-1. Copy or sync `Plugins/BlenderBridge` into an Unreal C++ project.
-2. Enable the `BlenderBridge` plugin and ensure `ProceduralMeshComponent` is available.
-3. Open `Edit > Project Settings > Plugins > Blender Bridge`.
+1. Copy or sync `Plugins/GeometryNodesBridge` into an Unreal C++ project.
+2. Enable the `GeometryNodesBridge` plugin and ensure `ProceduralMeshComponent` is available.
+3. Open `Edit > Project Settings > Plugins > Geometry Nodes Bridge`.
 4. Confirm `Automatically Start Session On Editor Launch`, `Blender Executable Path`, and `Bake Root Content Path`.
    Tip: if the Blender path is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
-5. If auto-start is disabled, use `Tools > Blender Bridge > Create Session`.
-6. Create a [UBlenderBridgeSource](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeSource.h) asset and set `Blend File`.
+5. If auto-start is disabled, use `Tools > Geometry Nodes Bridge > Create Session`.
+6. Create a [UGeometryNodesBridgeSource](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeSource.h) asset and set `Blend File`.
    Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured source asset.
-7. Drag that source asset into the level to spawn an [ABlenderBridgeActor](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeActor.h) with its bridge component already configured.
+7. Drag that source asset into the level to spawn an [AGeometryNodesBridgeActor](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeActor.h) with its bridge component already configured.
 8. If the source exposes multiple Geometry Nodes targets, choose one in `Target`.
 9. Click `Refresh Input Schema` if needed and wait for `Input Schema` and `Input Values` to populate.
 10. Edit reflected values in `Input Values`.
@@ -67,7 +67,7 @@ Today it can:
 
 - Baking is editor-only.
 - If you bake before a valid cook exists, the component automatically queues a cook first and then bakes when the mesh arrives.
-- Baked assets are written under the `Bake Root Content Path` project setting, which defaults to `/Game/BlenderBridge/Baked`.
+- Baked assets are written under the `Bake Root Content Path` project setting, which defaults to `/Game/GeometryNodesBridge/Baked`.
 - `Bake Output Mode` defaults to `StaticMesh`.
 - `StaticMesh` mode produces:
   - one baked static mesh asset
@@ -121,8 +121,8 @@ Supported reflected socket types today:
 
 ## Shared Session Notes
 
-- Session controls are global and live under `Tools > Blender Bridge`.
-- The editor can auto-start the shared session on launch through `Edit > Project Settings > Plugins > Blender Bridge > Automatically Start Session On Editor Launch`.
+- Session controls are global and live under `Tools > Geometry Nodes Bridge`.
+- The editor can auto-start the shared session on launch through `Edit > Project Settings > Plugins > Geometry Nodes Bridge > Automatically Start Session On Editor Launch`.
 - Components no longer own Blender worker processes.
 - Multiple actors can point at the same source and target while keeping separate `Input Values` in Unreal.
 - Multiple sources can stay resident in one Blender worker process.
@@ -137,18 +137,18 @@ Supported reflected socket types today:
 
 ## Syncing To A UE Project
 
-If you are developing the plugin from this repo and testing it from a separate Unreal project, use the PowerShell helpers in [scripts/Sync-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/scripts/Sync-BlenderBridgeToProject.ps1) and [scripts/Watch-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/scripts/Watch-BlenderBridgeToProject.ps1).
+If you are developing the plugin from this repo and testing it from a separate Unreal project, use the PowerShell helpers in [scripts/Sync-GeometryNodesBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/scripts/Sync-GeometryNodesBridgeToProject.ps1) and [scripts/Watch-GeometryNodesBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/scripts/Watch-GeometryNodesBridgeToProject.ps1).
 
 Manual one-shot sync:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\scripts\Sync-BlenderBridgeToProject.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\scripts\Sync-GeometryNodesBridgeToProject.ps1"
 ```
 
 Continuous watch-and-sync:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\scripts\Watch-BlenderBridgeToProject.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\scripts\Watch-GeometryNodesBridgeToProject.ps1"
 ```
 
 These scripts mirror the source plugin into the Unreal project plugin folder while ignoring generated folders such as `Binaries`, `Intermediate`, and `__pycache__`.

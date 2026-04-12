@@ -1,4 +1,4 @@
-# Blender Bridge Agent Guide
+# Geometry Nodes Bridge Agent Guide
 
 This file is the consolidated, Codex-oriented source of truth for this repo. It replaces the older `PATHS.md`, `PLAN.md`, and `TESTING.md`.
 
@@ -7,15 +7,15 @@ Validated on `2026-04-12` against the current repository, `README.md`, plugin so
 ## Scope
 
 - Repo type: Unreal plugin repo, not a full `.uproject`.
-- Primary plugin root: `Plugins/BlenderBridge`
-- Runtime module: `Plugins/BlenderBridge/Source/BlenderBridgeRuntime`
-- Editor module: `Plugins/BlenderBridge/Source/BlenderBridgeEditor`
-- Blender worker: `Plugins/BlenderBridge/Scripts/bridge_server.py`
+- Primary plugin root: `Plugins/GeometryNodesBridge`
+- Runtime module: `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime`
+- Editor module: `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor`
+- Blender worker: `Plugins/GeometryNodesBridge/Scripts/geometry_nodes_bridge_server.py`
 - Helper scripts:
-  - `scripts/Sync-BlenderBridgeToProject.ps1`
-  - `scripts/Watch-BlenderBridgeToProject.ps1`
-  - `scripts/Run-BlenderBridgeSmokeSuite.ps1`
-  - `scripts/Run-BlenderBridgePerfLoop.ps1`
+  - `scripts/Sync-GeometryNodesBridgeToProject.ps1`
+  - `scripts/Watch-GeometryNodesBridgeToProject.ps1`
+  - `scripts/Run-GeometryNodesBridgeSmokeSuite.ps1`
+  - `scripts/Run-GeometryNodesBridgePerfLoop.ps1`
 
 ## Current Product State
 
@@ -25,8 +25,8 @@ These capabilities are implemented and verified in the current codebase:
 - Double-buffered shared-memory mesh transport.
 - Shared editor-global Blender worker session.
 - Automatic shared-memory growth by restarting the worker with a larger buffer.
-- `.blend` import into a configured `BlenderBridgeSource` asset.
-- Dragging a source into the level spawns a configured `BlenderBridgeActor`.
+- `.blend` import into a configured `GeometryNodesBridgeSource` asset.
+- Dragging a source into the level spawns a configured `GeometryNodesBridgeActor`.
 - Per-actor Geometry Nodes target selection.
 - Reflected GN inputs backed by `FInstancedPropertyBag`.
 - Supported reflected input types: `float`, `int`, `bool`, `vector3`, `color`, `string`, and `enum`.
@@ -51,33 +51,33 @@ These items are still intentionally not implemented:
 
 Important source files that exist today:
 
-- Plugin descriptor: `Plugins/BlenderBridge/BlenderBridge.uplugin`
+- Plugin descriptor: `Plugins/GeometryNodesBridge/GeometryNodesBridge.uplugin`
 - Runtime module entry:
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeRuntimeModule.h`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Private/BlenderBridgeRuntimeModule.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeRuntimeModule.h`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeRuntimeModule.cpp`
 - Main runtime types:
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeActor.h`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeComponent.h`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeSource.h`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeSessionManager.h`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeWorkerSession.h`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeActor.h`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeComponent.h`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeSource.h`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeSessionManager.h`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Public/GeometryNodesBridgeWorkerSession.h`
 - Editor bake/details/import code:
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/BlenderBridgeBakeService.cpp`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/BlenderBridgeActorDetails.cpp`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/BlenderBridgeSourceFactory.cpp`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/ActorFactoryBlenderBridgeSource.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/GeometryNodesBridgeBakeService.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/GeometryNodesBridgeActorDetails.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/GeometryNodesBridgeSourceFactory.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/ActorFactoryGeometryNodesBridgeSource.cpp`
 - Automation tests:
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/Tests/BlenderBridgeSmokeAutomation.cpp`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/Tests/BlenderBridgePerfAutomation.cpp`
-  - `Plugins/BlenderBridge/Source/BlenderBridgeEditor/Private/Tests/BlenderBridgeObservedGeometryAutomation.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/Tests/GeometryNodesBridgeSmokeAutomation.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/Tests/GeometryNodesBridgePerfAutomation.cpp`
+  - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor/Private/Tests/GeometryNodesBridgeObservedGeometryAutomation.cpp`
 
 ## Agent Rules For This Repo
 
 - Resolve repo paths from the current workspace first. Older docs and some helper scripts still hard-code the previous repo directory name `blender-unreal-bridge`.
 - Treat repo-relative facts as authoritative. Treat machine-specific paths as examples that must be re-checked before use.
-- Prefer editing the plugin under `Plugins/BlenderBridge`; the copied plugin inside a separate Unreal project is a synced test target, not the source of truth.
+- Prefer editing the plugin under `Plugins/GeometryNodesBridge`; the copied plugin inside a separate Unreal project is a synced test target, not the source of truth.
 - If changing C++ code, expect an Unreal rebuild.
-- If changing `bridge_server.py`, expect the shared Blender session to need a restart.
+- If changing `geometry_nodes_bridge_server.py`, expect the shared Blender session to need a restart.
 
 ## Local Machine Paths Verified On This Machine
 
@@ -98,12 +98,12 @@ Use the repo plugin as the source of truth and sync it into the Unreal test proj
 Script:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Sync-BlenderBridgeToProject.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Sync-GeometryNodesBridgeToProject.ps1
 ```
 
 What it does today:
 
-- Mirrors `Plugins\BlenderBridge` into the external Unreal project plugin folder.
+- Mirrors `Plugins\GeometryNodesBridge` into the external Unreal project plugin folder.
 - Removes generated target artifacts unless `-PreserveGeneratedArtifacts` is passed.
 - Excludes `Binaries`, `Intermediate`, `.vs`, `__pycache__`, and `*.pyc`.
 
@@ -116,20 +116,20 @@ Validation note:
 
 Automated suites verified in code:
 
-- `BlenderBridge.E2E`
-- `BlenderBridge.PerfSmoke`
+- `GeometryNodesBridge.E2E`
+- `GeometryNodesBridge.PerfSmoke`
 
 In-editor commands:
 
 ```text
-Automation RunTests BlenderBridge.E2E
-Automation RunTests BlenderBridge.PerfSmoke
+Automation RunTests GeometryNodesBridge.E2E
+Automation RunTests GeometryNodesBridge.PerfSmoke
 ```
 
 Headless runner:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Run-BlenderBridgeSmokeSuite.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Run-GeometryNodesBridgeSmokeSuite.ps1
 ```
 
 Verified runner flags:
@@ -142,23 +142,23 @@ Verified runner flags:
 
 Verified runner outputs:
 
-- `BlenderBridgeSmokeLatest.md`
-- `BlenderBridgeTimingHistory.csv`
-- `BlenderBridgeSmokeLogs\<runlabel_timestamp>\...`
+- `GeometryNodesBridgeSmokeLatest.md`
+- `GeometryNodesBridgeTimingHistory.csv`
+- `GeometryNodesBridgeSmokeLogs\<runlabel_timestamp>\...`
 
 Validation note:
 
-- `scripts\Run-BlenderBridgeSmokeSuite.ps1` now defaults `-RepoRoot` to this workspace path.
+- `scripts\Run-GeometryNodesBridgeSmokeSuite.ps1` now defaults `-RepoRoot` to this workspace path.
 - Its default project and engine roots do match real local paths on this machine.
 
 ## Fast Manual Validation Flow
 
-1. Open a UE 5.7 C++ project that contains the synced `Plugins/BlenderBridge` plugin.
-2. Open `Edit > Project Settings > Plugins > Blender Bridge`.
+1. Open a UE 5.7 C++ project that contains the synced `Plugins/GeometryNodesBridge` plugin.
+2. Open `Edit > Project Settings > Plugins > Geometry Nodes Bridge`.
 3. Confirm session settings, especially `Blender Executable Path` and `Bake Root Content Path`.
-4. Start the shared session from `Tools > Blender Bridge` if auto-start is disabled.
-5. Import a `.blend` into the Content Browser or create a `BlenderBridgeSource`.
-6. Drag the source into the level to spawn a `BlenderBridgeActor`.
+4. Start the shared session from `Tools > Geometry Nodes Bridge` if auto-start is disabled.
+5. Import a `.blend` into the Content Browser or create a `GeometryNodesBridgeSource`.
+6. Drag the source into the level to spawn a `GeometryNodesBridgeActor`.
 7. Select `Target` if multiple GN targets are present.
 8. Click `Refresh Input Schema` if needed.
 9. Edit `Input Values` and click `Request Cook`.

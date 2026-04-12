@@ -1,0 +1,29 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Geometry Nodes Bridge",
+  "Description": "Shared-memory Blender to Unreal bridge with live mesh cooking and Geometry Nodes input reflection.",
+  "Category": "Rendering",
+  "CreatedBy": "Codex",
+  "CanContainContent": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "GeometryNodesBridgeEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "GeometryNodesBridgeRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "ProceduralMeshComponent",
+      "Enabled": true
+    }
+  ]
+}
