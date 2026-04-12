@@ -1,5 +1,5 @@
 param(
-    [string]$SourcePlugin = "C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\Plugins\BlenderBridge",
+    [string]$SourcePlugin = "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\Plugins\BlenderBridge",
     [string]$TargetPlugin = "C:\Users\Lassiter\Documents\Unreal Projects\blender_unreal\Plugins\BlenderBridge",
     [switch]$PreserveGeneratedArtifacts,
     [switch]$DryRun

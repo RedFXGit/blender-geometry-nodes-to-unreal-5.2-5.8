@@ -25,9 +25,7 @@ Today it can:
 - Editor module: `Plugins/BlenderBridge/Source/BlenderBridgeEditor`
 - Blender worker: `Plugins/BlenderBridge/Scripts/bridge_server.py`
 - Sync helpers: `scripts/Sync-BlenderBridgeToProject.ps1` and `scripts/Watch-BlenderBridgeToProject.ps1`
-- Implementation/status plan: `PLAN.md`
-- Manual test guide: `TESTING.md`
-- Path reference notes: `PATHS.md`
+- Consolidated agent/status/testing guide: `AGENTS.md`
 
 ## What The Current Slice Proves
 
@@ -54,9 +52,9 @@ Today it can:
 4. Confirm `Automatically Start Session On Editor Launch`, `Blender Executable Path`, and `Bake Root Content Path`.
    Tip: if the Blender path is blank, the plugin will try to auto-detect the newest standard Blender install under `C:\Program Files\Blender Foundation\Blender *\blender.exe`.
 5. If auto-start is disabled, use `Tools > Blender Bridge > Create Session`.
-6. Create a [UBlenderBridgeSource](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeSource.h) asset and set `Blend File`.
+6. Create a [UBlenderBridgeSource](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeSource.h) asset and set `Blend File`.
    Tip: you can also drag a `.blend` file into the Content Browser and the plugin will auto-create a configured source asset.
-7. Drag that source asset into the level to spawn an [ABlenderBridgeActor](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeActor.h) with its bridge component already configured.
+7. Drag that source asset into the level to spawn an [ABlenderBridgeActor](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/Plugins/BlenderBridge/Source/BlenderBridgeRuntime/Public/BlenderBridgeActor.h) with its bridge component already configured.
 8. If the source exposes multiple Geometry Nodes targets, choose one in `Target`.
 9. Click `Refresh Input Schema` if needed and wait for `Input Schema` and `Input Values` to populate.
 10. Edit reflected values in `Input Values`.
@@ -135,28 +133,26 @@ Supported reflected socket types today:
 - No in-place shared-memory remap without worker restart yet.
 - No packaged-runtime bridge execution yet.
 - No custom render proxy or RDG path yet.
-- No automated end-to-end tests yet.
+- Lightweight editor automation suites exist for smoke and perf-smoke coverage.
 
 ## Syncing To A UE Project
 
-If you are developing the plugin from this repo and testing it from a separate Unreal project, use the PowerShell helpers in [scripts/Sync-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/scripts/Sync-BlenderBridgeToProject.ps1) and [scripts/Watch-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/scripts/Watch-BlenderBridgeToProject.ps1).
+If you are developing the plugin from this repo and testing it from a separate Unreal project, use the PowerShell helpers in [scripts/Sync-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/scripts/Sync-BlenderBridgeToProject.ps1) and [scripts/Watch-BlenderBridgeToProject.ps1](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/scripts/Watch-BlenderBridgeToProject.ps1).
 
 Manual one-shot sync:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\scripts\Sync-BlenderBridgeToProject.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\scripts\Sync-BlenderBridgeToProject.ps1"
 ```
 
 Continuous watch-and-sync:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge\scripts\Watch-BlenderBridgeToProject.ps1"
+powershell -ExecutionPolicy Bypass -File "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal\scripts\Watch-BlenderBridgeToProject.ps1"
 ```
 
 These scripts mirror the source plugin into the Unreal project plugin folder while ignoring generated folders such as `Binaries`, `Intermediate`, and `__pycache__`.
 
 ## Recommended Reading
 
-- Project status and next milestones: [PLAN.md](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/PLAN.md)
-- Manual test guide: [TESTING.md](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/TESTING.md)
-- Local path reference: [PATHS.md](C:/Users/Lassiter/Documents/GitHub/blender-unreal-bridge/PATHS.md)
+- Consolidated repo guide for agents, status, paths, and testing: [AGENTS.md](C:/Users/Lassiter/Documents/GitHub/blender-geometry-nodes-to-unreal/AGENTS.md)

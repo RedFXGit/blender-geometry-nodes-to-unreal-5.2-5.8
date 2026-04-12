@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$PassLabel,
-    [string]$RepoRoot = "C:\Users\Lassiter\Documents\GitHub\blender-unreal-bridge",
+    [string]$RepoRoot = "C:\Users\Lassiter\Documents\GitHub\blender-geometry-nodes-to-unreal",
     [string]$ProjectRoot = "C:\Users\Lassiter\Documents\Unreal Projects\blender_unreal",
     [string]$EngineRoot = "C:\Program Files\Epic Games\UE_5.7",
     [int]$AutomationTimeoutMinutes = 20,
