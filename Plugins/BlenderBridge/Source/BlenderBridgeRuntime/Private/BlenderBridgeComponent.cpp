@@ -5,9 +5,11 @@
 #include "BlenderBridgeSessionManager.h"
 #include "BlenderBridgeSource.h"
 #include "BlenderBridgeMessages.h"
+#include "BlenderBridgeMoveProbeComponent.h"
 #include "Components/SplineComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/UserDefinedEnum.h"
+#include "Engine/Engine.h"
 #include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
@@ -20,10 +22,6 @@
 #include "StaticMeshResources.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectGlobals.h"
-
-#if WITH_EDITOR
-#include "Editor.h"
-#endif
 
 #ifndef BLENDER_BRIDGE_BUILD_VERSION
 #define BLENDER_BRIDGE_BUILD_VERSION TEXT("Unknown build")
@@ -223,6 +221,24 @@ namespace
         Reference.PathToComponent.Reset();
     }
 
+    FString DescribeSceneComponentForLog(const USceneComponent* SceneComponent)
+    {
+        if (SceneComponent == nullptr)
+        {
+            return TEXT("None");
+        }
+
+        const FTransform Transform = SceneComponent->GetComponentTransform();
+        return FString::Printf(
+            TEXT("%s owner=%s loc=%s rot=%s scale=%s mobility=%d"),
+            *GetPathNameSafe(SceneComponent),
+            *GetPathNameSafe(SceneComponent->GetOwner()),
+            *Transform.GetLocation().ToCompactString(),
+            *Transform.Rotator().ToCompactString(),
+            *Transform.GetScale3D().ToCompactString(),
+            static_cast<int32>(SceneComponent->Mobility));
+    }
+
     FName GetBridgeInputBagPropertyName(const FBridgeInputSchema& Entry)
     {
         return FInstancedPropertyBag::SanitizePropertyName(Entry.Id);
@@ -350,9 +366,8 @@ namespace
 
 UBlenderBridgeComponent::UBlenderBridgeComponent()
 {
-    PrimaryComponentTick.bCanEverTick = true;
-    PrimaryComponentTick.bStartWithTickEnabled = false;
-    bTickInEditor = true;
+    PrimaryComponentTick.bCanEverTick = false;
+    bTickInEditor = false;
     BridgeBuildVersion = BLENDER_BRIDGE_BUILD_VERSION;
 }
 
@@ -413,9 +428,6 @@ void UBlenderBridgeComponent::OnRegister()
     Super::OnRegister();
 
     RefreshComponentHandle();
-#if WITH_EDITOR
-    BindEditorObservationDelegates();
-#endif
     BindSplineComponentDelegates();
 
     if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
@@ -425,64 +437,6 @@ void UBlenderBridgeComponent::OnRegister()
 
     UpdatePreviewVisibility();
     UpdateBakedOutputVisibility();
-    SetComponentTickEnabled(!ObservedGeometryComponents.IsEmpty());
-}
-
-void UBlenderBridgeComponent::TickComponent(
-    const float DeltaTime,
-    const ELevelTick TickType,
-    FActorComponentTickFunction* ThisTickFunction)
-{
-    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-
-    if (ObservedGeometryComponents.IsEmpty())
-    {
-        return;
-    }
-
-    bool bObservedTransformChanged = false;
-    for (int32 ComponentIndex = ObservedGeometryComponents.Num() - 1; ComponentIndex >= 0; --ComponentIndex)
-    {
-        USceneComponent* SceneComponent = ObservedGeometryComponents[ComponentIndex].Get();
-        if (SceneComponent == nullptr)
-        {
-            ObservedGeometryComponentTransforms.Reset();
-            ObservedGeometryComponents.RemoveAtSwap(ComponentIndex);
-            continue;
-        }
-
-        const FObjectKey ComponentKey(SceneComponent);
-        const FTransform CurrentTransform = SceneComponent->GetComponentTransform();
-        if (FTransform* PreviousTransform = ObservedGeometryComponentTransforms.Find(ComponentKey))
-        {
-            if (!PreviousTransform->Equals(CurrentTransform, KINDA_SMALL_NUMBER))
-            {
-                *PreviousTransform = CurrentTransform;
-                bObservedTransformChanged = true;
-            }
-        }
-        else
-        {
-            ObservedGeometryComponentTransforms.Add(ComponentKey, CurrentTransform);
-        }
-    }
-
-    if (bObservedTransformChanged)
-    {
-        LastObservedGeometryEvent = TEXT("Tick detected a reference transform change.");
-        UE_LOG(
-            LogBlenderBridge,
-            Verbose,
-            TEXT("Reference follow-cook tick detected a transform change for bridge '%s'."),
-            *GetPathNameSafe(this));
-        QueueCookFromObservedGeometryChange(TEXT("Reference actor changed. Waiting to cook."));
-    }
-
-    if (ObservedGeometryComponents.IsEmpty())
-    {
-        ObservedGeometryComponentTransforms.Reset();
-        SetComponentTickEnabled(false);
-    }
 }
 
 void UBlenderBridgeComponent::RefreshInputSchema()
@@ -708,9 +662,6 @@ void UBlenderBridgeComponent::OnComponentDestroyed(const bool bDestroyingHierarc
 {
     CancelPendingSplineCook();
     UnbindSplineComponentDelegates();
-#if WITH_EDITOR
-    UnbindEditorObservationDelegates();
-#endif
     if (FModuleManager::Get().IsModuleLoaded(TEXT("BlenderBridgeRuntime")))
     {
         FBlenderBridgeRuntimeModule::Get().GetSessionManager().ReleaseComponentState(this);
@@ -807,7 +758,6 @@ void UBlenderBridgeComponent::RefreshComponentHandle()
 
 void UBlenderBridgeComponent::BindSplineComponentDelegates()
 {
-    UnbindSplineComponentDelegates();
     RefreshObservedSplineComponents();
 }
 
@@ -823,63 +773,15 @@ void UBlenderBridgeComponent::UnbindSplineComponentDelegates()
     }
 
     ObservedSplineComponents.Reset();
+}
 
-    for (const TWeakObjectPtr<USceneComponent>& ObservedGeometryComponent : ObservedGeometryComponents)
-    {
-        if (USceneComponent* SceneComponent = ObservedGeometryComponent.Get())
-        {
-            SceneComponent->TransformUpdated.RemoveAll(this);
-        }
-    }
-
+void UBlenderBridgeComponent::ResetObservedGeometryTracking()
+{
+    ReleaseObservedMoveProbes();
     ObservedGeometryComponents.Reset();
-    ObservedGeometryComponentTransforms.Reset();
     ObservedGeometryDebugSummary = TEXT("No observed reference actors.");
     LastObservedGeometryEvent.Reset();
-    SetComponentTickEnabled(false);
 }
-
-#if WITH_EDITOR
-void UBlenderBridgeComponent::BindEditorObservationDelegates()
-{
-    if (GEditor == nullptr)
-    {
-        return;
-    }
-
-    GEditor->OnEndObjectMovement().RemoveAll(this);
-    GEditor->OnEndObjectMovement().AddUObject(this, &UBlenderBridgeComponent::HandleEditorObjectMovementFinished);
-}
-
-void UBlenderBridgeComponent::UnbindEditorObservationDelegates()
-{
-    if (GEditor == nullptr)
-    {
-        return;
-    }
-
-    GEditor->OnEndObjectMovement().RemoveAll(this);
-}
-
-void UBlenderBridgeComponent::HandleEditorObjectMovementFinished(UObject& Object)
-{
-    if (!IsObservedGeometryObject(&Object))
-    {
-        return;
-    }
-
-    LastObservedGeometryEvent = FString::Printf(
-        TEXT("Editor move event: %s"),
-        *GetPathNameSafe(&Object));
-    UE_LOG(
-        LogBlenderBridge,
-        Log,
-        TEXT("Reference follow-cook editor move detected for '%s' on bridge '%s'."),
-        *GetPathNameSafe(&Object),
-        *GetPathNameSafe(this));
-    QueueCookFromObservedGeometryChange(TEXT("Reference actor changed. Waiting to cook."));
-}
-#endif
 
 USplineComponent* UBlenderBridgeComponent::GetBridgeSplineComponent() const
 {
@@ -1049,7 +951,10 @@ USplineComponent* UBlenderBridgeComponent::GetActiveCurveSourceSplineComponent()
 
 void UBlenderBridgeComponent::RefreshObservedSplineComponents()
 {
+    const FString PreviousObservedGeometryDebugSummary = ObservedGeometryDebugSummary;
+
     UnbindSplineComponentDelegates();
+    ResetObservedGeometryTracking();
 
     if (!TargetCapabilities.bSupportsCurveOwner)
     {
@@ -1079,9 +984,28 @@ void UBlenderBridgeComponent::RefreshObservedSplineComponents()
             return;
         }
 
-        SceneComponent->TransformUpdated.AddUObject(this, &UBlenderBridgeComponent::HandleObservedGeometryTransformUpdated);
         ObservedGeometryComponents.Add(SceneComponent);
-        ObservedGeometryComponentTransforms.Add(FObjectKey(SceneComponent), SceneComponent->GetComponentTransform());
+        UE_LOG(
+            LogBlenderBridge,
+            Verbose,
+            TEXT("Observed reference component registered for bridge '%s': %s"),
+            *GetPathNameSafe(this),
+            *DescribeSceneComponentForLog(SceneComponent));
+
+        if (UBlenderBridgeMoveProbeComponent* MoveProbe = FindOrCreateObservedMoveProbe(SceneComponent))
+        {
+            MoveProbe->AddWatchingBridge(this);
+            ObservedMoveProbes.Add(MoveProbe);
+        }
+        else
+        {
+            UE_LOG(
+                LogBlenderBridge,
+                Warning,
+                TEXT("Observed reference move probe could not be created for bridge '%s' component '%s'."),
+                *GetPathNameSafe(this),
+                *GetPathNameSafe(SceneComponent));
+        }
     };
 
     for (const FBlenderBridgeGeometryBinding& Binding : GeometryBindings)
@@ -1097,37 +1021,150 @@ void UBlenderBridgeComponent::RefreshObservedSplineComponents()
         }
     }
 
-    SetComponentTickEnabled(!ObservedGeometryComponents.IsEmpty());
     ObservedGeometryDebugSummary = BuildObservedGeometryDebugSummary();
-    UE_LOG(
-        LogBlenderBridge,
-        Log,
-        TEXT("Observed reference watch updated for '%s': %s"),
-        *GetPathNameSafe(this),
-        *ObservedGeometryDebugSummary);
+    if (!ObservedGeometryDebugSummary.Equals(PreviousObservedGeometryDebugSummary, ESearchCase::CaseSensitive))
+    {
+        if (ObservedGeometryComponents.IsEmpty())
+        {
+            UE_LOG(
+                LogBlenderBridge,
+                Verbose,
+                TEXT("Observed reference watch updated for '%s': %s"),
+                *GetPathNameSafe(this),
+                *ObservedGeometryDebugSummary);
+        }
+        else
+        {
+            UE_LOG(
+                LogBlenderBridge,
+                Log,
+                TEXT("Observed reference watch updated for '%s': %s"),
+                *GetPathNameSafe(this),
+                *ObservedGeometryDebugSummary);
+        }
+    }
 }
 
-void UBlenderBridgeComponent::HandleObservedGeometryTransformUpdated(
-    USceneComponent* UpdatedComponent,
-    EUpdateTransformFlags UpdateTransformFlags,
-    ETeleportType Teleport)
+UBlenderBridgeMoveProbeComponent* UBlenderBridgeComponent::FindOrCreateObservedMoveProbe(USceneComponent* SceneComponent)
 {
-    (void)UpdateTransformFlags;
+    if (SceneComponent == nullptr)
+    {
+        return nullptr;
+    }
+
+    AActor* OwnerActor = SceneComponent->GetOwner();
+    if (OwnerActor == nullptr)
+    {
+        return nullptr;
+    }
+
+    TInlineComponentArray<UBlenderBridgeMoveProbeComponent*> ExistingProbes(OwnerActor);
+    for (UBlenderBridgeMoveProbeComponent* ExistingProbe : ExistingProbes)
+    {
+        if (ExistingProbe != nullptr && ExistingProbe->MatchesObservedComponent(SceneComponent))
+        {
+            ExistingProbe->InitializeForObservedComponent(SceneComponent);
+            return ExistingProbe;
+        }
+    }
+
+    UBlenderBridgeMoveProbeComponent* MoveProbe = NewObject<UBlenderBridgeMoveProbeComponent>(
+        OwnerActor,
+        MakeUniqueObjectName(OwnerActor, UBlenderBridgeMoveProbeComponent::StaticClass(), TEXT("BlenderBridgeMoveProbe")),
+        RF_Transient);
+    if (MoveProbe == nullptr)
+    {
+        return nullptr;
+    }
+
+    OwnerActor->AddOwnedComponent(MoveProbe);
+    MoveProbe->SetupAttachment(SceneComponent);
+    MoveProbe->SetRelativeTransform(FTransform::Identity);
+    MoveProbe->RegisterComponent();
+    MoveProbe->InitializeForObservedComponent(SceneComponent);
+
+    UE_LOG(
+        LogBlenderBridge,
+        Verbose,
+        TEXT("Observed reference move probe attached for bridge '%s': probe=%s observed=%s"),
+        *GetPathNameSafe(this),
+        *GetPathNameSafe(MoveProbe),
+        *GetPathNameSafe(SceneComponent));
+
+    return MoveProbe;
+}
+
+void UBlenderBridgeComponent::ReleaseObservedMoveProbes()
+{
+    for (const TWeakObjectPtr<UBlenderBridgeMoveProbeComponent>& ObservedMoveProbe : ObservedMoveProbes)
+    {
+        UBlenderBridgeMoveProbeComponent* MoveProbe = ObservedMoveProbe.Get();
+        if (MoveProbe == nullptr)
+        {
+            continue;
+        }
+
+        MoveProbe->RemoveWatchingBridge(this);
+        if (!MoveProbe->HasWatchingBridges())
+        {
+            UE_LOG(
+                LogBlenderBridge,
+                Verbose,
+                TEXT("Observed reference move probe destroyed after bridge '%s' released it: probe=%s"),
+                *GetPathNameSafe(this),
+                *GetPathNameSafe(MoveProbe));
+            MoveProbe->DestroyComponent();
+        }
+    }
+
+    ObservedMoveProbes.Reset();
+}
+
+void UBlenderBridgeComponent::HandleObservedMoveProbeTransformUpdated(
+    UBlenderBridgeMoveProbeComponent* MoveProbeComponent,
+    const FTransform& PreviousTransform,
+    const FTransform& CurrentTransform,
+    const ETeleportType Teleport)
+{
+    (void)PreviousTransform;
+    (void)CurrentTransform;
     (void)Teleport;
 
-    if (UpdatedComponent == nullptr)
+    if (MoveProbeComponent == nullptr)
+    {
+        return;
+    }
+
+    USceneComponent* ObservedComponent = MoveProbeComponent->GetObservedComponent();
+    if (ObservedComponent == nullptr)
+    {
+        return;
+    }
+
+    const bool bStillWatched = ObservedGeometryComponents.ContainsByPredicate([ObservedComponent](const TWeakObjectPtr<USceneComponent>& ObservedGeometryComponent)
+    {
+        return ObservedGeometryComponent.Get() == ObservedComponent;
+    });
+    if (!bStillWatched)
     {
         return;
     }
 
     LastObservedGeometryEvent = FString::Printf(
-        TEXT("Component transform event: %s"),
-        *GetPathNameSafe(UpdatedComponent));
+        TEXT("Move probe transform event: %s"),
+        *GetPathNameSafe(ObservedComponent));
+    UE_LOG(
+        LogBlenderBridge,
+        Verbose,
+        TEXT("Reference follow-cook move probe detected for '%s' on bridge '%s'."),
+        *GetPathNameSafe(ObservedComponent),
+        *GetPathNameSafe(this));
     QueueCookFromObservedGeometryChange(TEXT("Reference actor changed. Waiting to cook."));
 }
 
 void UBlenderBridgeComponent::QueueCookFromObservedGeometryChange(const TCHAR* StatusMessage)
 {
+    const bool bWasAlreadyPending = PendingSplineCookTickerHandle.IsValid();
     CancelPendingSplineCook();
 
     if (Source == nullptr || TargetId.IsEmpty() || ConnectionState != EBlenderBridgeConnectionState::Connected)
@@ -1135,20 +1172,38 @@ void UBlenderBridgeComponent::QueueCookFromObservedGeometryChange(const TCHAR* S
         LastObservedGeometryEvent = FString::Printf(
             TEXT("%s Cook skipped because source/target/session is not ready."),
             StatusMessage);
+        UE_LOG(
+            LogBlenderBridge,
+            Log,
+            TEXT("Reference follow-cook skipped for bridge '%s': source=%d targetEmpty=%d connection=%d."),
+            *GetPathNameSafe(this),
+            Source != nullptr ? 1 : 0,
+            TargetId.IsEmpty() ? 1 : 0,
+            static_cast<int32>(ConnectionState));
         return;
     }
 
     SetBridgeStatus(EBlenderBridgeComponentStatus::CookQueued, StatusMessage);
-    LastObservedGeometryEvent = FString::Printf(
-        TEXT("%s Debounced recook queued for '%s'."),
-        StatusMessage,
-        *TargetId);
-    UE_LOG(
-        LogBlenderBridge,
-        Log,
-        TEXT("Reference follow-cook queued for bridge '%s' target '%s'."),
-        *GetPathNameSafe(this),
-        *TargetId);
+    if (bWasAlreadyPending)
+    {
+        LastObservedGeometryEvent = FString::Printf(
+            TEXT("%s Debounced recook refreshed for '%s'."),
+            StatusMessage,
+            *TargetId);
+    }
+    else
+    {
+        LastObservedGeometryEvent = FString::Printf(
+            TEXT("%s Debounced recook queued for '%s'."),
+            StatusMessage,
+            *TargetId);
+        UE_LOG(
+            LogBlenderBridge,
+            Log,
+            TEXT("Reference follow-cook queued for bridge '%s' target '%s'."),
+            *GetPathNameSafe(this),
+            *TargetId);
+    }
     PendingSplineCookTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
         FTickerDelegate::CreateWeakLambda(
             this,
@@ -1182,30 +1237,6 @@ void UBlenderBridgeComponent::CancelPendingSplineCook()
         FTSTicker::GetCoreTicker().RemoveTicker(PendingSplineCookTickerHandle);
         PendingSplineCookTickerHandle.Reset();
     }
-}
-
-bool UBlenderBridgeComponent::IsObservedGeometryObject(const UObject* Object) const
-{
-    if (Object == nullptr)
-    {
-        return false;
-    }
-
-    for (const TWeakObjectPtr<USceneComponent>& ObservedGeometryComponent : ObservedGeometryComponents)
-    {
-        const USceneComponent* SceneComponent = ObservedGeometryComponent.Get();
-        if (SceneComponent == nullptr)
-        {
-            continue;
-        }
-
-        if (Object == SceneComponent || Object == SceneComponent->GetOwner())
-        {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 FString UBlenderBridgeComponent::BuildObservedGeometryDebugSummary() const
@@ -1921,6 +1952,7 @@ void UBlenderBridgeComponent::ResetBridgeData(const bool bClearTargetSelection)
     CancelPendingSplineCook();
     CancelPendingBakedOutputVisibilitySwap();
     UnbindSplineComponentDelegates();
+    ResetObservedGeometryTracking();
     RemoveOwnedBridgeSplineComponent();
 
     if (PreviewMeshComponent != nullptr)

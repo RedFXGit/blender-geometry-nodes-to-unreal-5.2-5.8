@@ -311,7 +311,14 @@ void FBlenderBridgeWorkerSession::SendSerializedMessagesAsync(TArray<FBlenderBri
             const bool bSuccess = Pinned->PipeClient.WriteLine(Message.SerializedLine);
             if (bSuccess)
             {
-                Pinned->EmitLog(FString::Printf(TEXT("Sent %s to Blender worker."), BlenderBridge::LexToString(Message.Type)));
+                if (Message.Type == EBlenderBridgeMessageType::ReleaseComponentState)
+                {
+                    UE_LOG(LogBlenderBridge, Verbose, TEXT("Sent %s to Blender worker."), BlenderBridge::LexToString(Message.Type));
+                }
+                else
+                {
+                    Pinned->EmitLog(FString::Printf(TEXT("Sent %s to Blender worker."), BlenderBridge::LexToString(Message.Type)));
+                }
             }
             else
             {
@@ -433,7 +440,14 @@ bool FBlenderBridgeWorkerSession::SendMessage(const EBlenderBridgeMessageType Ty
     const bool bSuccess = PipeClient.WriteLine(Line);
     if (bSuccess)
     {
-        EmitLog(FString::Printf(TEXT("Sent %s to Blender worker."), BlenderBridge::LexToString(Type)));
+        if (Type == EBlenderBridgeMessageType::ReleaseComponentState)
+        {
+            UE_LOG(LogBlenderBridge, Verbose, TEXT("Sent %s to Blender worker."), BlenderBridge::LexToString(Type));
+        }
+        else
+        {
+            EmitLog(FString::Printf(TEXT("Sent %s to Blender worker."), BlenderBridge::LexToString(Type)));
+        }
     }
     else
     {

@@ -1,0 +1,44 @@
+﻿{
+	"devices": [
+		{
+			"deviceName": "DESKTOP-6477UBB",
+			"instance": "65F0C32A4AE071FFB93FF395205F8F9E",
+			"instanceName": "DESKTOP-6477UBB-28304",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 11 (25H2) [10.0.26200.8037] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce RTX 2080 SUPER",
+			"cPUModel": "Intel(R) Core(TM) i5-9600K CPU @ 3.70GHz",
+			"rAMInGB": 16,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.04.12-08.16.12",
+	"succeeded": 1,
+	"succeededWithWarnings": 0,
+	"failed": 0,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 0.21269179880619049,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "ObservedOverrideActorMove",
+			"fullTestPath": "BlenderBridge.Editor.ObservedOverrideActorMove",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"65F0C32A4AE071FFB93FF395205F8F9E"
+			],
+			"duration": 0.21269179880619049,
+			"dateTime": "2026.04.12-08.16.12",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		}
+	]
+}

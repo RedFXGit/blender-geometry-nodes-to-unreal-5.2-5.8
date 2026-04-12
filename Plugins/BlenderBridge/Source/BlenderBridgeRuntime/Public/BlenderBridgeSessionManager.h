@@ -119,6 +119,8 @@ private:
     bool TryApplyCachedCook(UBlenderBridgeComponent* Component);
     bool TryApplyCachedInstanceBake(UBlenderBridgeComponent* Component);
     void RestartSessionForResize(UBlenderBridgeComponent* RetryComponent, EBridgeManagerRequestKind RetryKind, uint64 RequiredSlotBytes);
+    FString MakeTrackedComponentStateKey(const UBlenderBridgeComponent* Component) const;
+    void TrackComponentState(UBlenderBridgeComponent* Component);
 
     FString MakeRequestId();
     FString ResolveWorkerScriptPath() const;
@@ -129,6 +131,7 @@ private:
     TMap<FString, FTargetSchemaCache> TargetSchemaCaches;
     TMap<FString, FCookedTargetCache> CookedTargetCaches;
     TMap<FString, FPendingRequest> PendingRequests;
+    TSet<FString> TrackedComponentStateKeys;
     TArray<TWeakObjectPtr<UBlenderBridgeComponent>> PendingCookRetryComponents;
     TArray<TWeakObjectPtr<UBlenderBridgeComponent>> PendingInstanceBakeRetryComponents;
     TMap<FString, TWeakObjectPtr<UBlenderBridgeComponent>> PendingWarmupPreviewComponents;

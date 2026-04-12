@@ -611,6 +611,7 @@ void FBlenderBridgeSessionManager::StopSession()
     PendingWarmupPreviewComponents.Reset();
     TargetSchemaCaches.Reset();
     CookedTargetCaches.Reset();
+    TrackedComponentStateKeys.Reset();
     bRestoreSourcesAfterReconnect = false;
 
     if (Session.IsValid())
@@ -684,7 +685,8 @@ void FBlenderBridgeSessionManager::ReleaseComponentState(UBlenderBridgeComponent
     }
 
     Component->RefreshComponentHandle();
-    if (Component->GetComponentHandle().IsEmpty())
+    const FString TrackedComponentStateKey = MakeTrackedComponentStateKey(Component);
+    if (TrackedComponentStateKey.IsEmpty() || !TrackedComponentStateKeys.Contains(TrackedComponentStateKey))
     {
         return;
     }
@@ -698,7 +700,42 @@ void FBlenderBridgeSessionManager::ReleaseComponentState(UBlenderBridgeComponent
         Payload->SetStringField(SourceHandleFieldName, SourceHandle);
     }
 
-    Session->QueueMessage(EBlenderBridgeMessageType::ReleaseComponentState, Payload);
+    if (Session->QueueMessage(EBlenderBridgeMessageType::ReleaseComponentState, Payload))
+    {
+        TrackedComponentStateKeys.Remove(TrackedComponentStateKey);
+    }
+}
+
+FString FBlenderBridgeSessionManager::MakeTrackedComponentStateKey(const UBlenderBridgeComponent* Component) const
+{
+    if (!IsValid(Component))
+    {
+        return FString();
+    }
+
+    const FString SourceHandle = Component->GetSourceHandle();
+    const FString ComponentHandle = Component->GetComponentHandle();
+    if (SourceHandle.IsEmpty() || ComponentHandle.IsEmpty())
+    {
+        return FString();
+    }
+
+    return FString::Printf(TEXT("%s%s%s"), *SourceHandle, CacheKeyDelimiter, *ComponentHandle);
+}
+
+void FBlenderBridgeSessionManager::TrackComponentState(UBlenderBridgeComponent* Component)
+{
+    if (!IsValid(Component))
+    {
+        return;
+    }
+
+    Component->RefreshComponentHandle();
+    const FString TrackedComponentStateKey = MakeTrackedComponentStateKey(Component);
+    if (!TrackedComponentStateKey.IsEmpty())
+    {
+        TrackedComponentStateKeys.Add(TrackedComponentStateKey);
+    }
 }
 
 void FBlenderBridgeSessionManager::NotifySourceChanged(UBlenderBridgeComponent* Component)
@@ -2127,7 +2164,13 @@ bool FBlenderBridgeSessionManager::SendCookRequest(UBlenderBridgeComponent* Comp
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooking, TEXT("Cooking selected target."));
-    return Session->QueueMessage(EBlenderBridgeMessageType::CookTarget, Payload);
+    if (Session->QueueMessage(EBlenderBridgeMessageType::CookTarget, Payload))
+    {
+        TrackComponentState(Component);
+        return true;
+    }
+
+    return false;
 }
 
 bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeComponent* Component)
@@ -2269,6 +2312,7 @@ bool FBlenderBridgeSessionManager::SendInstanceBakeRequest(UBlenderBridgeCompone
     Component->SetBridgeStatus(EBlenderBridgeComponentStatus::Cooking, TEXT("Preparing instanced bake payload."));
     if (Session->QueueMessage(EBlenderBridgeMessageType::RequestInstanceBake, Payload))
     {
+        TrackComponentState(Component);
         return true;
     }
 
