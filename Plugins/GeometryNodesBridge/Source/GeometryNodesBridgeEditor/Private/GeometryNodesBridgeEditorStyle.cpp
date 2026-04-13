@@ -25,10 +25,10 @@ FGeometryNodesBridgeEditorStyle::FGeometryNodesBridgeEditorStyle()
 
     const FVector2D Icon16x16(16.0f, 16.0f);
     const FVector2D Icon64x64(64.0f, 64.0f);
-    constexpr TCHAR BlenderBadgeIconName[] = TEXT("blender_community_badge_white");
+    constexpr TCHAR SourceAssetIconName[] = TEXT("icon");
 
-    Set(TEXT("ClassIcon.GeometryNodesBridgeSource"), new IMAGE_BRUSH_SVG(BlenderBadgeIconName, Icon16x16));
-    Set(TEXT("ClassThumbnail.GeometryNodesBridgeSource"), new IMAGE_BRUSH_SVG(BlenderBadgeIconName, Icon64x64));
+    Set(TEXT("ClassIcon.GeometryNodesBridgeSource"), new IMAGE_BRUSH(SourceAssetIconName, Icon16x16));
+    Set(TEXT("ClassThumbnail.GeometryNodesBridgeSource"), new IMAGE_BRUSH(SourceAssetIconName, Icon64x64));
 }
 
 FGeometryNodesBridgeEditorStyle::~FGeometryNodesBridgeEditorStyle()
