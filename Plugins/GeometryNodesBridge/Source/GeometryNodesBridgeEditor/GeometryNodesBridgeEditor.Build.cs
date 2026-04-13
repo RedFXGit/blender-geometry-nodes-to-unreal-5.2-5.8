@@ -28,6 +28,7 @@ public class GeometryNodesBridgeEditor : ModuleRules
                 "MaterialEditor",
                 "MeshDescription",
                 "MeshConversion",
+                "ProceduralMeshComponent",
                 "PropertyEditor",
                 "Projects",
                 "RenderCore",
