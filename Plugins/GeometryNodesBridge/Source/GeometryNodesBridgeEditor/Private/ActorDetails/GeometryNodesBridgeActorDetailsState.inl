@@ -573,12 +573,20 @@ FText FGeometryNodesBridgeActorDetails::GetBakeModeDescriptionText() const
         return FText::GetEmpty();
     }
 
+    const TCHAR* MaterialsSharingText = BridgeComponent->bShareGeneratedBakeMaterials
+        ? TEXT(" Generated placeholder bake materials are shared per source and target by default.")
+        : TEXT(" Generated placeholder bake materials stay actor-local for this component.");
+
     if (BridgeComponent->BakeOutputMode == EGeometryNodesBridgeBakeOutputMode::InstancedHierarchy)
     {
-        return FText::FromString(TEXT("InstancedHierarchy preserves recoverable repeated elements as HISM output and shares prototype meshes across duplicate actors from the same blend source."));
+        return FText::FromString(FString::Printf(
+            TEXT("InstancedHierarchy preserves recoverable repeated elements as HISM output and shares prototype meshes across duplicate actors using the same blend source and target.%s"),
+            MaterialsSharingText));
     }
 
-    return FText::FromString(TEXT("StaticMesh preserves the existing one-mesh bake flow by collapsing the cooked result into a single baked mesh asset."));
+    return FText::FromString(FString::Printf(
+        TEXT("StaticMesh preserves the existing one-mesh bake flow by collapsing the cooked result into a single baked mesh asset.%s"),
+        MaterialsSharingText));
 }
 
 FText FGeometryNodesBridgeActorDetails::GetInstancedBakeNoteText() const

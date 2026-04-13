@@ -144,6 +144,16 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Geometry Nodes Bridge|Bake", meta = (DisplayName = "Bake Output Mode"))
     EGeometryNodesBridgeBakeOutputMode BakeOutputMode = EGeometryNodesBridgeBakeOutputMode::StaticMesh;
 
+    UPROPERTY(
+        EditAnywhere,
+        BlueprintReadOnly,
+        Category = "Geometry Nodes Bridge|Bake",
+        meta = (
+            DisplayName = "Share Generated Bake Materials",
+            ToolTip = "When enabled, generated placeholder bake materials are shared per source and target. Disable this to keep generated bake materials actor-local."
+        ))
+    bool bShareGeneratedBakeMaterials = true;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Geometry Nodes Bridge|Bake")
     TSoftObjectPtr<UStaticMesh> BakedStaticMesh;
 

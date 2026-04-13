@@ -26,6 +26,7 @@ void FGeometryNodesBridgeActorDetails::CustomizeDetails(IDetailLayoutBuilder& De
         RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, TargetId));
         RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, GeometryBindings));
         RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, BakeOutputMode));
+        RegisterRefreshOnPropertyChange(DetailBuilder, SingleBridgeComponent, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, bShareGeneratedBakeMaterials));
     }
 
     BuildOverviewCategory(DetailBuilder);

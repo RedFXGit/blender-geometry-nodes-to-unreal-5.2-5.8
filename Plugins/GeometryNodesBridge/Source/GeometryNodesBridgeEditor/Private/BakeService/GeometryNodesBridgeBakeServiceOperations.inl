@@ -17,14 +17,15 @@ bool FGeometryNodesBridgeBakeService::BakeComponent(UGeometryNodesBridgeComponen
         }
 
         const FString BakeFolderPath = BuildBakeFolderPath(Component);
-        const FString MaterialsFolderPath = FString::Printf(TEXT("%s/Materials"), *BakeFolderPath);
+        const FString MaterialsRootPath = BuildGeneratedMaterialsRootPath(Component);
+        const FString MaterialsFolderPath = BuildGeneratedMaterialsFolderPath(Component);
 
         FResolvedBakeMaterials ResolvedMaterialState;
         ResolveMaterialsForSlots(
             Component,
             Component->LastCookedMaterialSlots,
             MaterialsFolderPath,
-            EnsurePlaceholderParentMaterial(BakeFolderPath),
+            EnsurePlaceholderParentMaterial(MaterialsRootPath),
             ResolvedMaterialState);
 
         const TArray<UMaterialInterface*> ResolvedMaterials =
@@ -67,8 +68,8 @@ bool FGeometryNodesBridgeBakeService::BakeComponent(UGeometryNodesBridgeComponen
             return false;
         }
 
-        const FString ActorBakeFolderPath = BuildBakeFolderPath(Component);
-        const FString MaterialsFolderPath = FString::Printf(TEXT("%s/Materials"), *ActorBakeFolderPath);
+        const FString MaterialsRootPath = BuildGeneratedMaterialsRootPath(Component);
+        const FString MaterialsFolderPath = BuildGeneratedMaterialsFolderPath(Component);
         const FString SharedPrototypeMeshesFolderPath = FString::Printf(TEXT("%s/Meshes"), *BuildSharedPrototypeFolderPath(Component));
 
         TArray<FBridgeMaterialSlotDescriptor> MaterialSlots;
@@ -79,7 +80,7 @@ bool FGeometryNodesBridgeBakeService::BakeComponent(UGeometryNodesBridgeComponen
             Component,
             MaterialSlots,
             MaterialsFolderPath,
-            EnsurePlaceholderParentMaterial(ActorBakeFolderPath),
+            EnsurePlaceholderParentMaterial(MaterialsRootPath),
             ResolvedMaterialState);
 
         TMap<int32, TArray<FTransform>> PlacementsByPrototypeIndex;

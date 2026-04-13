@@ -361,6 +361,27 @@ namespace GeometryNodesBridgeAutomation
         return Hash;
     }
 
+    TArray<FString> CollectGeneratedMaterialPaths(const UGeometryNodesBridgeComponent* Component)
+    {
+        TArray<FString> Paths;
+        if (Component == nullptr)
+        {
+            return Paths;
+        }
+
+        for (const FGeometryNodesBridgeGeneratedMaterialReference& MaterialReference : Component->GeneratedBakeMaterials)
+        {
+            const FString Path = MaterialReference.Material.ToSoftObjectPath().ToString();
+            if (!Path.IsEmpty())
+            {
+                Paths.Add(Path);
+            }
+        }
+
+        Paths.Sort();
+        return Paths;
+    }
+
     TArray<FString> CollectPrototypeMeshPaths(const UGeometryNodesBridgeComponent* Component)
     {
         TArray<FString> Paths;

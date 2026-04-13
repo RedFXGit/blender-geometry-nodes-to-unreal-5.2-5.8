@@ -72,6 +72,7 @@ namespace GeometryNodesBridgeAutomation
     bool HasAnyBakedOutput(const UGeometryNodesBridgeComponent* Component);
     bool CleanupAutomationScratchBakeRoot(FString& OutError);
     uint32 HashCookedMeshSignature(const FBridgeDecodedMesh& Mesh);
+    TArray<FString> CollectGeneratedMaterialPaths(const UGeometryNodesBridgeComponent* Component);
     TArray<FString> CollectPrototypeMeshPaths(const UGeometryNodesBridgeComponent* Component);
     int32 CountHismComponents(const AActor* Actor);
     int32 CountInstancesAcrossHismComponents(const AActor* Actor);

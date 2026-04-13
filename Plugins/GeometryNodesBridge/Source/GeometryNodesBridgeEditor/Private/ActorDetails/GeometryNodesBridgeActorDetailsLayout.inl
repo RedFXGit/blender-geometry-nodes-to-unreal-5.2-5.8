@@ -361,6 +361,7 @@ void FGeometryNodesBridgeActorDetails::BuildBakeCategory(IDetailLayoutBuilder& D
     BakeCategory.SetSortOrder(BakeSortOrder);
 
     AddComponentProperty(BakeCategory, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, BakeOutputMode));
+    AddComponentProperty(BakeCategory, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, bShareGeneratedBakeMaterials));
     AddComponentProperty(BakeCategory, GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, bHidePreviewAfterBake));
 
     AddInfoMessageRow(

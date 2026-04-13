@@ -110,6 +110,16 @@ namespace
             *GetTargetSegment(Component));
     }
 
+    FString BuildSharedBakeScopePath(const UGeometryNodesBridgeComponent* Component)
+    {
+        const FString RootPath = GetEffectiveBakeRootPath(Component);
+        return FString::Printf(
+            TEXT("%s/%s/%s"),
+            *RootPath,
+            *GetSourceSegment(Component),
+            *GetTargetSegment(Component));
+    }
+
     FString BuildSourceScopeKey(const UGeometryNodesBridgeComponent* Component)
     {
         if (Component == nullptr || Component->Source == nullptr || Component->Source->BlendFile.FilePath.IsEmpty())
@@ -124,15 +134,22 @@ namespace
 
     FString BuildSharedPrototypeFolderPath(const UGeometryNodesBridgeComponent* Component)
     {
-        const FString RootPath = GetEffectiveBakeRootPath(Component);
-        const FString SourceScopeKey = BuildSourceScopeKey(Component);
-        if (SourceScopeKey.IsEmpty())
-        {
-            return FString::Printf(TEXT("%s/%s"), *RootPath, SharedPrototypeFolderName);
-        }
+        return FString::Printf(
+            TEXT("%s/%s"),
+            *BuildSharedBakeScopePath(Component),
+            SharedPrototypeFolderName);
+    }
 
-        const FString ScopeHash = FMD5::HashAnsiString(*SourceScopeKey).Left(16);
-        return FString::Printf(TEXT("%s/Blend_%s/%s"), *RootPath, *ScopeHash, SharedPrototypeFolderName);
+    FString BuildGeneratedMaterialsRootPath(const UGeometryNodesBridgeComponent* Component)
+    {
+        return Component != nullptr && Component->bShareGeneratedBakeMaterials
+            ? BuildSharedBakeScopePath(Component)
+            : BuildBakeFolderPath(Component);
+    }
+
+    FString BuildGeneratedMaterialsFolderPath(const UGeometryNodesBridgeComponent* Component)
+    {
+        return FString::Printf(TEXT("%s/Materials"), *BuildGeneratedMaterialsRootPath(Component));
     }
 
     FString BuildAssetObjectPath(const FString& PackagePath, const FString& AssetName)
@@ -885,6 +902,48 @@ namespace
         }
     }
 
+    void CollectReferencedGeneratedMaterialPaths(
+        const UGeometryNodesBridgeComponent* ExcludedComponent,
+        TSet<FSoftObjectPath>& OutReferencedPaths)
+    {
+        OutReferencedPaths.Reset();
+
+        for (TObjectIterator<UGeometryNodesBridgeComponent> It; It; ++It)
+        {
+            const UGeometryNodesBridgeComponent* Component = *It;
+            if (!IsValid(Component) || Component->HasAnyFlags(RF_ClassDefaultObject))
+            {
+                continue;
+            }
+
+            if (Component != ExcludedComponent)
+            {
+                for (const FGeometryNodesBridgeGeneratedMaterialReference& MaterialReference : Component->GeneratedBakeMaterials)
+                {
+                    const FSoftObjectPath MaterialPath = MaterialReference.Material.ToSoftObjectPath();
+                    if (MaterialPath.IsValid())
+                    {
+                        OutReferencedPaths.Add(MaterialPath);
+                    }
+                }
+            }
+
+            for (const FGeometryNodesBridgeMaterialOverride& OverrideEntry : Component->MaterialOverrides)
+            {
+                if (OverrideEntry.Material == nullptr)
+                {
+                    continue;
+                }
+
+                const FSoftObjectPath MaterialPath(OverrideEntry.Material);
+                if (MaterialPath.IsValid())
+                {
+                    OutReferencedPaths.Add(MaterialPath);
+                }
+            }
+        }
+    }
+
     void CleanupReplacedBakedOutput(UGeometryNodesBridgeComponent* Component, const FBakedOutputSnapshot& PreviousOutput)
     {
         if (Component == nullptr)
@@ -922,10 +981,23 @@ namespace
             }
         }
 
+        TOptional<TSet<FSoftObjectPath>> ReferencedGeneratedMaterialPaths;
         for (const FGeometryNodesBridgeGeneratedMaterialReference& MaterialReference : PreviousOutput.GeneratedMaterials)
         {
             const FSoftObjectPath MaterialPath = MaterialReference.Material.ToSoftObjectPath();
             if (!MaterialPath.IsValid() || CurrentGeneratedMaterialPaths.Contains(MaterialPath))
+            {
+                continue;
+            }
+
+            if (!ReferencedGeneratedMaterialPaths.IsSet())
+            {
+                TSet<FSoftObjectPath> GatheredPaths;
+                CollectReferencedGeneratedMaterialPaths(Component, GatheredPaths);
+                ReferencedGeneratedMaterialPaths = MoveTemp(GatheredPaths);
+            }
+
+            if (ReferencedGeneratedMaterialPaths->Contains(MaterialPath))
             {
                 continue;
             }

@@ -2,6 +2,7 @@
 
 #include "GeometryNodesBridgeActor.h"
 #include "GeometryNodesBridgeComponent.h"
+#include "GeometryNodesBridgeSource.h"
 #include "Components/SplineComponent.h"
 #include "Misc/AutomationTest.h"
 #include "UObject/GarbageCollection.h"
@@ -12,6 +13,86 @@ namespace
 {
     constexpr TCHAR E2EManifestRelativePath[] = TEXT("Config/E2ESmokeScenarios.json");
     constexpr TCHAR PerfSmokeManifestRelativePath[] = TEXT("Config/PerfSmokeBenchmarks.json");
+
+    FString SanitizeBakePathSegment(const FString& InValue)
+    {
+        FString Sanitized;
+        Sanitized.Reserve(InValue.Len());
+
+        for (const TCHAR Character : InValue)
+        {
+            if (FChar::IsAlnum(Character))
+            {
+                Sanitized.AppendChar(Character);
+            }
+            else
+            {
+                Sanitized.AppendChar(TEXT('_'));
+            }
+        }
+
+        while (Sanitized.Contains(TEXT("__")))
+        {
+            Sanitized.ReplaceInline(TEXT("__"), TEXT("_"));
+        }
+
+        Sanitized.TrimStartAndEndInline();
+        bool bCharRemoved = false;
+        Sanitized.TrimCharInline(TEXT('_'), &bCharRemoved);
+        return Sanitized.IsEmpty() ? TEXT("BridgeAsset") : Sanitized;
+    }
+
+    bool UsesTargetScopedSharedPrototypeFolder(
+        const UGeometryNodesBridgeComponent* Component,
+        const TArray<FString>& PrototypeMeshPaths)
+    {
+        if (Component == nullptr || Component->Source == nullptr || PrototypeMeshPaths.IsEmpty())
+        {
+            return false;
+        }
+
+        const FString TargetSegment = Component->TargetId.IsEmpty() ? FString(TEXT("Target")) : Component->TargetId;
+        const FString ExpectedFolderFragment = FString::Printf(
+            TEXT("/%s/%s/_SharedPrototypes/"),
+            *SanitizeBakePathSegment(Component->Source->GetName()),
+            *SanitizeBakePathSegment(TargetSegment));
+
+        for (const FString& Path : PrototypeMeshPaths)
+        {
+            if (!Path.Contains(ExpectedFolderFragment))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool UsesTargetScopedSharedMaterialsFolder(
+        const UGeometryNodesBridgeComponent* Component,
+        const TArray<FString>& MaterialPaths)
+    {
+        if (Component == nullptr || Component->Source == nullptr || MaterialPaths.IsEmpty())
+        {
+            return false;
+        }
+
+        const FString TargetSegment = Component->TargetId.IsEmpty() ? FString(TEXT("Target")) : Component->TargetId;
+        const FString ExpectedFolderFragment = FString::Printf(
+            TEXT("/%s/%s/Materials/"),
+            *SanitizeBakePathSegment(Component->Source->GetName()),
+            *SanitizeBakePathSegment(TargetSegment));
+
+        for (const FString& Path : MaterialPaths)
+        {
+            if (!Path.Contains(ExpectedFolderFragment))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     bool HasStaticBakeOutput(const UGeometryNodesBridgeComponent* Component)
     {
@@ -41,6 +122,7 @@ namespace
             InstancesStep = EInstancesStep::ValidateInitial;
             InitialMeshHash = 0;
             SplinePointIndex = INDEX_NONE;
+            PrimaryGeneratedMaterialPaths.Reset();
             PrimaryPrototypeMeshPaths.Reset();
             SecondaryActor.Reset();
             SecondaryComponent.Reset();
@@ -336,6 +418,25 @@ namespace
                         return;
                     }
 
+                    if (!UsesTargetScopedSharedPrototypeFolder(Primary, PrimaryPrototypeMeshPaths))
+                    {
+                        Fail(TEXT("Primary instanced bake did not place shared prototype meshes under the expected source/target folder."));
+                        return;
+                    }
+
+                    PrimaryGeneratedMaterialPaths = GeometryNodesBridgeAutomation::CollectGeneratedMaterialPaths(Primary);
+                    if (PrimaryGeneratedMaterialPaths.IsEmpty())
+                    {
+                        Fail(TEXT("Primary instanced bake did not store any generated material references."));
+                        return;
+                    }
+
+                    if (!UsesTargetScopedSharedMaterialsFolder(Primary, PrimaryGeneratedMaterialPaths))
+                    {
+                        Fail(TEXT("Primary instanced bake did not place generated materials under the expected source/target folder."));
+                        return;
+                    }
+
                     if (!SpawnTrackedActor(
                             GetPrimarySource(),
                             FString::Printf(TEXT("%s_Duplicate"), *E2EScenario.Id),
@@ -470,6 +571,26 @@ namespace
                         return;
                     }
 
+                    const TArray<FString> SecondaryGeneratedMaterialPaths =
+                        GeometryNodesBridgeAutomation::CollectGeneratedMaterialPaths(SecondaryComponent.Get());
+                    if (SecondaryGeneratedMaterialPaths.IsEmpty())
+                    {
+                        Fail(TEXT("Duplicate instanced bake did not store any generated material references."));
+                        return;
+                    }
+
+                    if (!UsesTargetScopedSharedMaterialsFolder(SecondaryComponent.Get(), SecondaryGeneratedMaterialPaths))
+                    {
+                        Fail(TEXT("Duplicate instanced bake did not place generated materials under the expected source/target folder."));
+                        return;
+                    }
+
+                    if (SecondaryGeneratedMaterialPaths != PrimaryGeneratedMaterialPaths)
+                    {
+                        Fail(TEXT("Duplicate instanced bake did not reuse the shared generated material assets."));
+                        return;
+                    }
+
                     Primary->DeleteBakedOutput();
                     SecondaryComponent->DeleteBakedOutput();
                     if (Primary->ComponentStatus == EGeometryNodesBridgeComponentStatus::Error
@@ -513,6 +634,7 @@ namespace
         EInstancesStep InstancesStep = EInstancesStep::ValidateInitial;
         uint32 InitialMeshHash = 0;
         int32 SplinePointIndex = INDEX_NONE;
+        TArray<FString> PrimaryGeneratedMaterialPaths;
         TArray<FString> PrimaryPrototypeMeshPaths;
         TWeakObjectPtr<AGeometryNodesBridgeActor> SecondaryActor;
         TWeakObjectPtr<UGeometryNodesBridgeComponent> SecondaryComponent;
