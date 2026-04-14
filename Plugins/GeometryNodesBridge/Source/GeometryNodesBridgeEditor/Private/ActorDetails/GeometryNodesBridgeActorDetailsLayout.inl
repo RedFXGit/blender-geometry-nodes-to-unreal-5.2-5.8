@@ -217,15 +217,33 @@ void FGeometryNodesBridgeActorDetails::BuildParametersCategory(IDetailLayoutBuil
         WarningBackgroundColor,
         TAttribute<EVisibility>::CreateSP(this, &FGeometryNodesBridgeActorDetails::GetParametersHintVisibility));
 
-    if (IDetailPropertyRow* InputValuesRow = AddComponentProperty(
-        ParametersCategory,
-        GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, InputValues),
-        false,
-        true))
+    if (!ShouldShowParameterProperties())
     {
-        InputValuesRow->DisplayName(FText::FromString(TEXT("Input Values")));
-        InputValuesRow->Visibility(TAttribute<EVisibility>::CreateSP(this, &FGeometryNodesBridgeActorDetails::GetParametersPropertyVisibility));
+        return;
     }
+
+    const TArray<UObject*> BridgeComponents = GetSelectedBridgeComponentObjects();
+    if (BridgeComponents.IsEmpty())
+    {
+        return;
+    }
+
+    const TSharedPtr<IPropertyHandle> InputValuesHandle = DetailBuilder.AddObjectPropertyData(
+        BridgeComponents,
+        GET_MEMBER_NAME_CHECKED(UGeometryNodesBridgeComponent, InputValues));
+    if (!InputValuesHandle.IsValid() || !InputValuesHandle->IsValidHandle())
+    {
+        return;
+    }
+
+    TArray<TWeakObjectPtr<UObject>> CustomizedObjects;
+    DetailBuilder.GetObjectsBeingCustomized(CustomizedObjects);
+
+    GeometryNodesBridge::PropertyBagBuilder::AddGroupedPropertyBagToCategory(
+        InputValuesHandle.ToSharedRef(),
+        ParametersCategory,
+        CustomizedObjects,
+        DetailBuilder.GetPropertyUtilities());
 }
 
 void FGeometryNodesBridgeActorDetails::BuildCurveCategory(IDetailLayoutBuilder& DetailBuilder)

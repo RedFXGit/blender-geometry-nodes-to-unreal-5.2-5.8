@@ -2,6 +2,7 @@
 
 #include "GeometryNodesBridgeActor.h"
 #include "GeometryNodesBridgeComponent.h"
+#include "GeometryNodesBridgePropertyBagBuilder.h"
 #include "GeometryNodesBridgeRuntimeModule.h"
 #include "GeometryNodesBridgeSessionManager.h"
 #include "GeometryNodesBridgeSource.h"

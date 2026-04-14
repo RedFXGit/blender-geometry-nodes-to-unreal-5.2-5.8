@@ -6,10 +6,10 @@ void FGeometryNodesBridgeActorDetails::AddInfoMessageRow(
     TAttribute<EVisibility> Visibility) const
 {
     CategoryBuilder.AddCustomRow(FilterText)
+    .Visibility(Visibility)
     .WholeRowContent()
     [
         SNew(SBorder)
-        .Visibility(Visibility)
         .BorderImage(FCoreStyle::Get().GetBrush(TEXT("WhiteBrush")))
         .BorderBackgroundColor(BackgroundColor)
         .Padding(8.f)

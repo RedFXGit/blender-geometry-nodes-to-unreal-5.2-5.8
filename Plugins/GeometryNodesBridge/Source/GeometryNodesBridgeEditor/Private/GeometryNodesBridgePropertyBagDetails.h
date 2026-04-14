@@ -17,7 +17,4 @@ protected:
         TSharedRef<IPropertyHandle> StructPropertyHandle,
         IDetailChildrenBuilder& StructBuilder,
         IPropertyTypeCustomizationUtils& StructCustomizationUtils) override;
-
-private:
-    static bool ShouldUseGroupedLayout(const TSharedRef<IPropertyHandle>& StructPropertyHandle);
 };
