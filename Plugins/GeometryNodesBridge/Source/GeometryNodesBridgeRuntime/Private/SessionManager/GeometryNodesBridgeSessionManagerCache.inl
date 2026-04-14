@@ -203,6 +203,22 @@ void FGeometryNodesBridgeSessionManager::ApplySourceCacheToComponents(
 
         const FString PreviousTargetId = Component->TargetId;
         const FString PreviousSchemaTargetId = Component->SchemaTargetId;
+        bool bCarriedEnsureCookRequest = false;
+        bool bCarriedEnsureInstanceBakeRequest = false;
+
+        for (const TPair<FString, FPendingRequest>& PendingEntry : PendingRequests)
+        {
+            const FPendingRequest& PendingRequest = PendingEntry.Value;
+            if (PendingRequest.Kind != EBridgeManagerRequestKind::EnsureSourceLoaded
+                || PendingRequest.Component.Get() != Component
+                || PendingRequest.SourceHandle != SourceHandle)
+            {
+                continue;
+            }
+
+            bCarriedEnsureCookRequest |= PendingRequest.bRequestCookAfterDescribe;
+            bCarriedEnsureInstanceBakeRequest |= PendingRequest.bRequestInstanceBakeAfterDescribe;
+        }
 
         Component->ConnectionState = SessionState;
 
@@ -271,9 +287,11 @@ void FGeometryNodesBridgeSessionManager::ApplySourceCacheToComponents(
         }
 
         const bool bRequestCook = (PendingComponent != nullptr && PendingComponent == Component && bRequestCookForPendingComponent)
+            || bCarriedEnsureCookRequest
             || IsRetryComponent(PendingCookRetryComponents, Component);
         const bool bRequestInstanceBake =
             (PendingComponent != nullptr && PendingComponent == Component && bRequestInstanceBakeForPendingComponent)
+            || bCarriedEnsureInstanceBakeRequest
             || IsRetryComponent(PendingInstanceBakeRetryComponents, Component);
         const bool bPreserveInputValues = (PreviousSchemaTargetId == Component->TargetId);
 
@@ -285,6 +303,20 @@ void FGeometryNodesBridgeSessionManager::ApplySourceCacheToComponents(
         {
             return !Entry.IsValid() || Entry.Get() == Component;
         });
+
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] source_cache applied source='%s' component=%s target_count=%d selected_target='%s' preserve_input_values=%s request_cook=%s request_instance_bake=%s carried_ensure_cook=%s carried_ensure_instance_bake=%s"),
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component),
+            SourceCache->Targets.Num(),
+            Component->TargetId.IsEmpty() ? TEXT("<none>") : *Component->TargetId,
+            BoolToString(bPreserveInputValues),
+            BoolToString(bRequestCook),
+            BoolToString(bRequestInstanceBake),
+            BoolToString(bCarriedEnsureCookRequest),
+            BoolToString(bCarriedEnsureInstanceBakeRequest));
 
         RequestDescribeTarget(Component, bPreserveInputValues, bRequestCook, bRequestInstanceBake);
     };

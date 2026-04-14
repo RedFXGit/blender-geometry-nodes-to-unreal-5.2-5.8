@@ -13,6 +13,7 @@ class BridgeLoadedSource:
         self.object_names = list(object_names)
         self.targets = list(targets)
         self.targets_by_id = {str(target["id"]): target for target in targets}
+        self.target_descriptions_by_id: dict[str, dict[str, object]] = {}
 
 
 class BridgeComponentState:

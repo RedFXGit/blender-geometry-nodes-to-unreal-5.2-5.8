@@ -58,13 +58,13 @@ void UActorFactoryGeometryNodesBridgeSource::PostSpawnActor(UObject* Asset, AAct
             return;
         }
 
+        // Keep drag-drop actors on the same source-change path as manually assigned sources so
+        // they immediately inherit resolved targets and cached schema before the first cook.
+        SessionManager.NotifySourceChanged(BridgeComponent);
+
         if (SessionManager.IsSessionConnected())
         {
             BridgeComponent->RequestCook();
-        }
-        else
-        {
-            SessionManager.NotifySourceChanged(BridgeComponent);
         }
     }
 }

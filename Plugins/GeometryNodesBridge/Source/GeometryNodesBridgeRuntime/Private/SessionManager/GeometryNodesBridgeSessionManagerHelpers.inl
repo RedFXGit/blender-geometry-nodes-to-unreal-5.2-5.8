@@ -22,6 +22,12 @@ namespace
     constexpr TCHAR TimingWorkerExtractMergeFieldName[] = TEXT("timing_worker_extract_merge_ms");
     constexpr TCHAR TimingWorkerSerializeFieldName[] = TEXT("timing_worker_serialize_ms");
     constexpr TCHAR TimingWorkerSharedWriteFieldName[] = TEXT("timing_worker_shared_write_ms");
+    constexpr TCHAR TimingWorkerDescribeTotalFieldName[] = TEXT("timing_worker_describe_total_ms");
+    constexpr TCHAR TimingWorkerDescribeResolveFieldName[] = TEXT("timing_worker_describe_resolve_ms");
+    constexpr TCHAR TimingWorkerDescribeCapabilitiesFieldName[] = TEXT("timing_worker_describe_capabilities_ms");
+    constexpr TCHAR TimingWorkerDescribeGeometryInputsFieldName[] = TEXT("timing_worker_describe_geometry_inputs_ms");
+    constexpr TCHAR TimingWorkerDescribeSchemaFieldName[] = TEXT("timing_worker_describe_schema_ms");
+    constexpr TCHAR TimingWorkerDescribeCacheHitFieldName[] = TEXT("timing_worker_describe_cache_hit");
     constexpr TCHAR TimingHistoryFileName[] = TEXT("GeometryNodesBridgeTimingHistory.csv");
 
     TAutoConsoleVariable<int32> CVarGeometryNodesBridgeLogCookTimings(
@@ -46,6 +52,17 @@ namespace
         double ExtractMergeMs = -1.0;
         double SerializeMs = -1.0;
         double SharedWriteMs = -1.0;
+    };
+
+    struct FBridgeDescribeTimingBreakdown
+    {
+        double TotalMs = -1.0;
+        double ResolveMs = -1.0;
+        double CapabilitiesMs = -1.0;
+        double GeometryInputsMs = -1.0;
+        double SchemaMs = -1.0;
+        bool bCacheHit = false;
+        bool bHasCacheHit = false;
     };
 
     struct FBridgeTimingHistoryRow
@@ -151,6 +168,17 @@ namespace
         TryGetTimingFieldMs(Payload, TimingWorkerExtractMergeFieldName, OutTimings.ExtractMergeMs);
         TryGetTimingFieldMs(Payload, TimingWorkerSerializeFieldName, OutTimings.SerializeMs);
         TryGetTimingFieldMs(Payload, TimingWorkerSharedWriteFieldName, OutTimings.SharedWriteMs);
+    }
+
+    void ParseDescribeTimingBreakdown(const TSharedPtr<FJsonObject>& Payload, FBridgeDescribeTimingBreakdown& OutTimings)
+    {
+        TryGetTimingFieldMs(Payload, TimingWorkerDescribeTotalFieldName, OutTimings.TotalMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerDescribeResolveFieldName, OutTimings.ResolveMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerDescribeCapabilitiesFieldName, OutTimings.CapabilitiesMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerDescribeGeometryInputsFieldName, OutTimings.GeometryInputsMs);
+        TryGetTimingFieldMs(Payload, TimingWorkerDescribeSchemaFieldName, OutTimings.SchemaMs);
+        OutTimings.bHasCacheHit =
+            Payload.IsValid() && Payload->TryGetBoolField(TimingWorkerDescribeCacheHitFieldName, OutTimings.bCacheHit);
     }
 
     void PopulateTimingHistoryMetadataFromComponent(const UGeometryNodesBridgeComponent* Component, FBridgeTimingHistoryRow& OutRow)
@@ -382,6 +410,51 @@ namespace
         {
             return Entry.IsValid() && Entry.Get() == Component;
         });
+    }
+
+    bool IsPreviewBridgeComponent(const UGeometryNodesBridgeComponent* Component)
+    {
+        if (Component == nullptr)
+        {
+            return false;
+        }
+
+        const AActor* Owner = Component->GetOwner();
+        if (Owner == nullptr)
+        {
+            return false;
+        }
+
+        if (Owner->bIsEditorPreviewActor)
+        {
+            return true;
+        }
+
+        const UWorld* World = Owner->GetWorld();
+        return World != nullptr && (World->WorldType == EWorldType::EditorPreview || World->WorldType == EWorldType::Inactive);
+    }
+
+    const TCHAR* BoolToString(const bool bValue)
+    {
+        return bValue ? TEXT("true") : TEXT("false");
+    }
+
+    FString DescribeBridgeComponentForLog(const UGeometryNodesBridgeComponent* Component)
+    {
+        if (!IsValid(Component))
+        {
+            return TEXT("<none>");
+        }
+
+        const TCHAR* TargetLabel = Component->TargetId.IsEmpty()
+            ? TEXT("<none>")
+            : *Component->TargetId;
+        return FString::Printf(
+            TEXT("actor='%s' component='%s' preview=%s target='%s'"),
+            *GetNameSafe(Component->GetOwner()),
+            *GetNameSafe(Component),
+            BoolToString(IsPreviewBridgeComponent(Component)),
+            TargetLabel);
     }
 
     FString MakeTargetSchemaCacheKey(const FString& SourceHandle, const FString& TargetId)

@@ -64,6 +64,15 @@ bool FGeometryNodesBridgeSessionManager::QueueEnsureSourceLoadedRequest(
 
     if (SourceCache.bLoaded && !bForceReload)
     {
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] ensure cache_hit source='%s' component=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component),
+            BoolToString(bRequestCookAfterDescribe),
+            BoolToString(bRequestInstanceBakeAfterDescribe));
+
         if (IsValid(Component))
         {
             ApplySourceCacheToComponents(SourceHandle, bRequestCookAfterDescribe, bRequestInstanceBakeAfterDescribe, Component);
@@ -85,14 +94,37 @@ bool FGeometryNodesBridgeSessionManager::QueueEnsureSourceLoadedRequest(
             continue;
         }
 
-        if (!ExistingRequest.Component.IsValid() && IsValid(Component))
+        const UGeometryNodesBridgeComponent* ExistingComponent = ExistingRequest.Component.Get();
+        bool bReplacedPendingComponent = false;
+        if (IsValid(Component))
         {
-            ExistingRequest.Component = Component;
+            const bool bShouldReplacePendingComponent =
+                ExistingComponent == nullptr
+                || (ExistingComponent != Component
+                    && IsPreviewBridgeComponent(ExistingComponent)
+                    && !IsPreviewBridgeComponent(Component));
+            if (bShouldReplacePendingComponent)
+            {
+                ExistingRequest.Component = Component;
+                bReplacedPendingComponent = true;
+            }
         }
 
         ExistingRequest.bForceReload |= bForceReload;
         ExistingRequest.bRequestCookAfterDescribe |= bRequestCookAfterDescribe;
         ExistingRequest.bRequestInstanceBakeAfterDescribe |= bRequestInstanceBakeAfterDescribe;
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] ensure coalesced_into=%s source='%s' existing_component=%s incoming_component=%s replaced_component=%s force_reload=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+            *Entry.Key,
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(ExistingComponent),
+            *DescribeBridgeComponentForLog(Component),
+            BoolToString(bReplacedPendingComponent),
+            BoolToString(ExistingRequest.bForceReload),
+            BoolToString(ExistingRequest.bRequestCookAfterDescribe),
+            BoolToString(ExistingRequest.bRequestInstanceBakeAfterDescribe));
         return true;
     }
 
@@ -110,12 +142,25 @@ bool FGeometryNodesBridgeSessionManager::QueueEnsureSourceLoadedRequest(
     PendingRequest.bForceReload = bForceReload;
     PendingRequest.bRequestCookAfterDescribe = bRequestCookAfterDescribe;
     PendingRequest.bRequestInstanceBakeAfterDescribe = bRequestInstanceBakeAfterDescribe;
+    PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     if (IsValid(Component))
     {
         Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::SchemaPending, TEXT("Loading source into the global Blender session."));
     }
+
+    UE_LOG(
+        LogGeometryNodesBridge,
+        Log,
+        TEXT("[GeometryNodesBridgeFlow] ensure queued request=%s source='%s' blend_file='%s' component=%s force_reload=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+        *RequestId,
+        *SourceHandle,
+        *BlendFilePath,
+        *DescribeBridgeComponentForLog(Component),
+        BoolToString(bForceReload),
+        BoolToString(bRequestCookAfterDescribe),
+        BoolToString(bRequestInstanceBakeAfterDescribe));
 
     return Session->QueueMessage(EGeometryNodesBridgeMessageType::EnsureSourceLoaded, Payload);
 }
@@ -139,6 +184,15 @@ bool FGeometryNodesBridgeSessionManager::RequestDescribeTarget(
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (SourceCache == nullptr || !SourceCache->bLoaded)
     {
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] describe deferred_to_ensure source='%s' component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component),
+            BoolToString(bPreserveInputValues),
+            BoolToString(bRequestCookAfterDescribe),
+            BoolToString(bRequestInstanceBakeAfterDescribe));
         return RequestEnsureSourceLoaded(Component, false, bRequestCookAfterDescribe, bRequestInstanceBakeAfterDescribe);
     }
 
@@ -154,6 +208,15 @@ bool FGeometryNodesBridgeSessionManager::RequestDescribeTarget(
         bRequestCookAfterDescribe,
         bRequestInstanceBakeAfterDescribe))
     {
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] describe cache_hit source='%s' component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component),
+            BoolToString(bPreserveInputValues),
+            BoolToString(bRequestCookAfterDescribe),
+            BoolToString(bRequestInstanceBakeAfterDescribe));
         return true;
     }
 
@@ -171,6 +234,16 @@ bool FGeometryNodesBridgeSessionManager::RequestDescribeTarget(
         ExistingRequest.bPreserveInputValues |= bPreserveInputValues;
         ExistingRequest.bRequestCookAfterDescribe |= bRequestCookAfterDescribe;
         ExistingRequest.bRequestInstanceBakeAfterDescribe |= bRequestInstanceBakeAfterDescribe;
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] describe coalesced_into=%s source='%s' component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+            *Entry.Key,
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component),
+            BoolToString(ExistingRequest.bPreserveInputValues),
+            BoolToString(ExistingRequest.bRequestCookAfterDescribe),
+            BoolToString(ExistingRequest.bRequestInstanceBakeAfterDescribe));
         return true;
     }
 
@@ -188,9 +261,21 @@ bool FGeometryNodesBridgeSessionManager::RequestDescribeTarget(
     PendingRequest.bPreserveInputValues = bPreserveInputValues;
     PendingRequest.bRequestCookAfterDescribe = bRequestCookAfterDescribe;
     PendingRequest.bRequestInstanceBakeAfterDescribe = bRequestInstanceBakeAfterDescribe;
+    PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 
     Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::SchemaPending, TEXT("Refreshing target schema from Blender."));
+    UE_LOG(
+        LogGeometryNodesBridge,
+        Log,
+        TEXT("[GeometryNodesBridgeFlow] describe queued request=%s source='%s' target='%s' component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+        *RequestId,
+        *SourceHandle,
+        *Component->TargetId,
+        *DescribeBridgeComponentForLog(Component),
+        BoolToString(bPreserveInputValues),
+        BoolToString(bRequestCookAfterDescribe),
+        BoolToString(bRequestInstanceBakeAfterDescribe));
     return Session->QueueMessage(EGeometryNodesBridgeMessageType::DescribeTarget, Payload);
 }
 
@@ -209,6 +294,12 @@ bool FGeometryNodesBridgeSessionManager::SendCookRequest(UGeometryNodesBridgeCom
     const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
     if (SourceCache == nullptr || !SourceCache->bLoaded)
     {
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] cook deferred_to_ensure source='%s' component=%s"),
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component));
         return RequestEnsureSourceLoaded(Component, false, true, false);
     }
 
@@ -222,6 +313,13 @@ bool FGeometryNodesBridgeSessionManager::SendCookRequest(UGeometryNodesBridgeCom
     // currently selected target, we should still allow a cook with an empty values payload.
     if (Component->SchemaTargetId != Component->TargetId)
     {
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] cook deferred_to_describe source='%s' component=%s schema_target='%s'"),
+            *SourceHandle,
+            *DescribeBridgeComponentForLog(Component),
+            Component->SchemaTargetId.IsEmpty() ? TEXT("<none>") : *Component->SchemaTargetId);
         return RequestDescribeTarget(Component, Component->SchemaTargetId == Component->TargetId, true, false);
     }
 

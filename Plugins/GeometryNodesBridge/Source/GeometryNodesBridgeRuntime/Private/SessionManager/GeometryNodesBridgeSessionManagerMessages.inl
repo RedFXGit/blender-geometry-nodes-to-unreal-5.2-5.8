@@ -6,11 +6,13 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
     if (Message.Type == EGeometryNodesBridgeMessageType::SourceLoaded)
     {
         FPendingRequest PendingRequest;
+        bool bHadPendingRequest = false;
         if (!RequestId.IsEmpty())
         {
             if (FPendingRequest* ExistingRequest = PendingRequests.Find(RequestId))
             {
                 PendingRequest = *ExistingRequest;
+                bHadPendingRequest = true;
                 PendingRequests.Remove(RequestId);
             }
         }
@@ -34,6 +36,22 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
         SourceCache.Targets = MoveTemp(Targets);
         SourceCache.bLoaded = true;
 
+        const double ResponseWaitMs = PendingRequest.SentTimeSeconds > 0.0
+            ? (FPlatformTime::Seconds() - PendingRequest.SentTimeSeconds) * 1000.0
+            : -1.0;
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] source_loaded request=%s matched_pending=%s source='%s' targets=%d pending_component=%s cook_after_describe=%s instance_bake_after_describe=%s response_wait=%s"),
+            RequestId.IsEmpty() ? TEXT("<none>") : *RequestId,
+            BoolToString(bHadPendingRequest),
+            *SourceHandle,
+            SourceCache.Targets.Num(),
+            *DescribeBridgeComponentForLog(PendingRequest.Component.Get()),
+            BoolToString(PendingRequest.bRequestCookAfterDescribe),
+            BoolToString(PendingRequest.bRequestInstanceBakeAfterDescribe),
+            *FormatTimingMs(ResponseWaitMs));
+
         ApplySourceCacheToComponents(
             SourceHandle,
             PendingRequest.bRequestCookAfterDescribe,
@@ -45,30 +63,35 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
     if (Message.Type == EGeometryNodesBridgeMessageType::TargetDescription)
     {
         FPendingRequest PendingRequest;
+        bool bHadPendingRequest = false;
         if (!RequestId.IsEmpty())
         {
             if (FPendingRequest* ExistingRequest = PendingRequests.Find(RequestId))
             {
                 PendingRequest = *ExistingRequest;
+                bHadPendingRequest = true;
                 PendingRequests.Remove(RequestId);
             }
-        }
-
-        UGeometryNodesBridgeComponent* Component = PendingRequest.Component.Get();
-        if (!IsValid(Component))
-        {
-            return;
         }
 
         TArray<FBridgeInputSchema> Schema;
         if (!GeometryNodesBridge::ParseInputSchema(Message.Payload, Schema))
         {
-            if (PendingRequest.bRequestInstanceBakeAfterDescribe)
+            if (PendingRequest.bRequestInstanceBakeAfterDescribe && IsValid(PendingRequest.Component.Get()))
             {
-                Component->bPendingInstancedBake = false;
+                PendingRequest.Component->bPendingInstancedBake = false;
             }
-            Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Error, TEXT("Failed to parse target schema from Blender."));
+            if (IsValid(PendingRequest.Component.Get()))
+            {
+                PendingRequest.Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Error, TEXT("Failed to parse target schema from Blender."));
+            }
             return;
+        }
+
+        FString SourceHandle = PendingRequest.SourceHandle;
+        if (SourceHandle.IsEmpty() && Message.Payload.IsValid())
+        {
+            Message.Payload->TryGetStringField(SourceHandleFieldName, SourceHandle);
         }
 
         FString TargetId;
@@ -87,36 +110,135 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
         TArray<FBridgeGeometryInputDescriptor> GeometryDescriptors;
         GeometryNodesBridge::ParseGeometryInputDescriptors(Message.Payload, GeometryDescriptors);
 
-        Component->InputSchema = MoveTemp(Schema);
-        Component->GeometryInputDescriptors = MoveTemp(GeometryDescriptors);
-        Component->SchemaTargetId = TargetId;
-        Component->RebuildInputValues(PendingRequest.bPreserveInputValues);
-        Component->RebuildGeometryBindings(PendingRequest.bPreserveInputValues);
-        const FString CurveOwnerStatus = Component->ApplyCurveOwnerDescription(TargetId, Capabilities, PendingRequest.bPreserveInputValues);
-        if (!PendingRequest.SourceHandle.IsEmpty() && !TargetId.IsEmpty())
+        if (!SourceHandle.IsEmpty() && !TargetId.IsEmpty())
         {
-            FTargetSchemaCache& CachedSchema = TargetSchemaCaches.FindOrAdd(MakeTargetSchemaCacheKey(PendingRequest.SourceHandle, TargetId));
-            CachedSchema.Schema = Component->InputSchema;
-            CachedSchema.GeometryInputs = Component->GeometryInputDescriptors;
+            FTargetSchemaCache& CachedSchema = TargetSchemaCaches.FindOrAdd(MakeTargetSchemaCacheKey(SourceHandle, TargetId));
+            CachedSchema.Schema = Schema;
+            CachedSchema.GeometryInputs = GeometryDescriptors;
             CachedSchema.Capabilities = Capabilities;
         }
-        Component->SetBridgeStatus(
-            EGeometryNodesBridgeComponentStatus::Ready,
-            FString::Printf(
-                TEXT("Ready. Received %d bridge inputs and %d geometry binding target(s).%s"),
-                Component->InputSchema.Num(),
-                Component->GeometryInputDescriptors.Num(),
-                *CurveOwnerStatus));
 
-        if (PendingRequest.bRequestCookAfterDescribe)
+        const double ResponseWaitMs = PendingRequest.SentTimeSeconds > 0.0
+            ? (FPlatformTime::Seconds() - PendingRequest.SentTimeSeconds) * 1000.0
+            : -1.0;
+        FBridgeDescribeTimingBreakdown DescribeTimings;
+        ParseDescribeTimingBreakdown(Message.Payload, DescribeTimings);
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] target_description request=%s matched_pending=%s source='%s' target='%s' schema_inputs=%d geometry_inputs=%d pending_component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s response_wait=%s worker_total=%s worker_resolve=%s worker_capabilities=%s worker_geometry_inputs=%s worker_schema=%s worker_cache_hit=%s"),
+            RequestId.IsEmpty() ? TEXT("<none>") : *RequestId,
+            BoolToString(bHadPendingRequest),
+            *SourceHandle,
+            TargetId.IsEmpty() ? TEXT("<none>") : *TargetId,
+            Schema.Num(),
+            GeometryDescriptors.Num(),
+            *DescribeBridgeComponentForLog(PendingRequest.Component.Get()),
+            BoolToString(PendingRequest.bPreserveInputValues),
+            BoolToString(PendingRequest.bRequestCookAfterDescribe),
+            BoolToString(PendingRequest.bRequestInstanceBakeAfterDescribe),
+            *FormatTimingMs(ResponseWaitMs),
+            *FormatTimingMs(DescribeTimings.TotalMs),
+            *FormatTimingMs(DescribeTimings.ResolveMs),
+            *FormatTimingMs(DescribeTimings.CapabilitiesMs),
+            *FormatTimingMs(DescribeTimings.GeometryInputsMs),
+            *FormatTimingMs(DescribeTimings.SchemaMs),
+            DescribeTimings.bHasCacheHit ? BoolToString(DescribeTimings.bCacheHit) : TEXT("n/a"));
+
+        auto ApplyTargetDescriptionToComponent =
+            [&](UGeometryNodesBridgeComponent* Component, const bool bPreserveInputValues, const bool bRequestCookAfterDescribe, const bool bRequestInstanceBakeAfterDescribe)
         {
-            SendCookRequest(Component);
+            if (!IsValid(Component))
+            {
+                return;
+            }
+
+            Component->InputSchema = Schema;
+            Component->GeometryInputDescriptors = GeometryDescriptors;
+            Component->SchemaTargetId = TargetId;
+            Component->RebuildInputValues(bPreserveInputValues);
+            Component->RebuildGeometryBindings(bPreserveInputValues);
+            const FString CurveOwnerStatus = Component->ApplyCurveOwnerDescription(TargetId, Capabilities, bPreserveInputValues);
+            Component->SetBridgeStatus(
+                EGeometryNodesBridgeComponentStatus::Ready,
+                FString::Printf(
+                    TEXT("Ready. Received %d bridge inputs and %d geometry binding target(s).%s"),
+                    Component->InputSchema.Num(),
+                    Component->GeometryInputDescriptors.Num(),
+                    *CurveOwnerStatus));
+
+            UE_LOG(
+                LogGeometryNodesBridge,
+                Log,
+                TEXT("[GeometryNodesBridgeFlow] target_description applied source='%s' target='%s' component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+                *SourceHandle,
+                TargetId.IsEmpty() ? TEXT("<none>") : *TargetId,
+                *DescribeBridgeComponentForLog(Component),
+                BoolToString(bPreserveInputValues),
+                BoolToString(bRequestCookAfterDescribe),
+                BoolToString(bRequestInstanceBakeAfterDescribe));
+
+            if (bRequestCookAfterDescribe)
+            {
+                SendCookRequest(Component);
+                return;
+            }
+
+            if (bRequestInstanceBakeAfterDescribe)
+            {
+                SendInstanceBakeRequest(Component);
+            }
+        };
+
+        UGeometryNodesBridgeComponent* Component = PendingRequest.Component.Get();
+        if (IsValid(Component))
+        {
+            ApplyTargetDescriptionToComponent(
+                Component,
+                PendingRequest.bPreserveInputValues,
+                PendingRequest.bRequestCookAfterDescribe,
+                PendingRequest.bRequestInstanceBakeAfterDescribe);
             return;
         }
 
-        if (PendingRequest.bRequestInstanceBakeAfterDescribe)
+        int32 FallbackApplyCount = 0;
+        if (!SourceHandle.IsEmpty() && !TargetId.IsEmpty())
         {
-            SendInstanceBakeRequest(Component);
+            ForEachBridgeComponent([&](UGeometryNodesBridgeComponent* BridgeComponent)
+            {
+                if (BridgeComponent->GetSourceHandle() != SourceHandle || BridgeComponent->TargetId != TargetId)
+                {
+                    return;
+                }
+
+                const bool bPreserveInputValues = BridgeComponent->SchemaTargetId == TargetId;
+                ApplyTargetDescriptionToComponent(
+                    BridgeComponent,
+                    bPreserveInputValues,
+                    bHadPendingRequest ? PendingRequest.bRequestCookAfterDescribe : false,
+                    bHadPendingRequest ? PendingRequest.bRequestInstanceBakeAfterDescribe : false);
+                ++FallbackApplyCount;
+            });
+        }
+
+        if (FallbackApplyCount > 0)
+        {
+            UE_LOG(
+                LogGeometryNodesBridge,
+                Log,
+                TEXT("[GeometryNodesBridgeFlow] target_description fallback_applied source='%s' target='%s' component_count=%d"),
+                *SourceHandle,
+                TargetId.IsEmpty() ? TEXT("<none>") : *TargetId,
+                FallbackApplyCount);
+        }
+        else
+        {
+            UE_LOG(
+                LogGeometryNodesBridge,
+                Warning,
+                TEXT("Received TargetDescription for source '%s' target '%s' but no live bridge component was available to consume it."),
+                *SourceHandle,
+                *TargetId);
         }
         return;
     }

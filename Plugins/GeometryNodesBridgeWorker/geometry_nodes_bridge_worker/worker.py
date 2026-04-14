@@ -296,37 +296,25 @@ class BridgeWorker:
             return False
 
         geometry_item = self.find_owner_geometry_interface_item(modifier)
-        geometry_socket_identifier = ""
-        geometry_socket_label = ""
-        if geometry_item is not None:
-            geometry_socket_identifier = str(getattr(geometry_item, "identifier", "") or "").strip()
-            geometry_socket_label = str(getattr(geometry_item, "name", "") or "").strip()
+        if geometry_item is None:
+            return False
+
+        geometry_socket_identifier = str(getattr(geometry_item, "identifier", "") or "").strip()
+        geometry_socket_label = str(getattr(geometry_item, "name", "") or "").strip()
 
         for node in modifier.node_group.nodes:
             if getattr(node, "bl_idname", "") != "NodeGroupInput":
                 continue
 
             for output in node.outputs:
-                if len(output.links) <= 0:
+                if not bool(getattr(output, "is_linked", False)):
                     continue
 
                 socket_identifier = str(getattr(output, "identifier", "") or "").strip()
                 socket_name = str(getattr(output, "name", "") or "").strip()
-                socket_bl_idname = str(getattr(output, "bl_idname", "") or "").strip()
-                socket_type = str(getattr(output, "type", "") or "").strip()
-                is_geometry_socket = (
-                    socket_bl_idname == "NodeSocketGeometry"
-                    or socket_type.upper() == "GEOMETRY"
-                    or socket_identifier == geometry_socket_identifier
-                )
-                if not is_geometry_socket:
-                    continue
-
                 if geometry_socket_identifier and socket_identifier == geometry_socket_identifier:
                     return True
                 if geometry_socket_label and socket_name == geometry_socket_label:
-                    return True
-                if not geometry_socket_identifier and not geometry_socket_label:
                     return True
 
         return False
@@ -425,6 +413,10 @@ class BridgeWorker:
         if target_object is None or modifier is None or modifier.node_group is None:
             return []
 
+        object_type = str(getattr(target_object, "type", "") or "")
+        if object_type not in {"MESH", "CURVE"}:
+            return []
+
         if not self.does_modifier_use_owner_geometry(modifier):
             return []
 
@@ -432,7 +424,6 @@ class BridgeWorker:
         if geometry_item is None:
             return []
 
-        object_type = str(getattr(target_object, "type", "") or "")
         allowed_source_kinds: list[str] = []
         if object_type == "MESH":
             allowed_source_kinds.append("static_mesh_component")
@@ -705,20 +696,64 @@ class BridgeWorker:
         request_id = str(payload.get("request_id") or "")
         source_handle = str(payload.get("source_handle") or "").strip()
         target_id = str(payload.get("target_id") or "").strip()
-        _source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+
+        total_start_time = time.perf_counter()
+        resolve_start_time = total_start_time
+        source_state, _target_descriptor, target_object, modifier = self.resolve_target(source_handle, target_id)
+        resolve_end_time = time.perf_counter()
+
+        cached_description = source_state.target_descriptions_by_id.get(target_id)
+        if cached_description is not None:
+            total_end_time = time.perf_counter()
+            self.send_for_request(
+                "TargetDescription",
+                request_id=request_id,
+                source_handle=source_handle,
+                target_id=target_id,
+                timing_worker_describe_total_ms=elapsed_ms(total_start_time, total_end_time),
+                timing_worker_describe_resolve_ms=elapsed_ms(resolve_start_time, resolve_end_time),
+                timing_worker_describe_capabilities_ms=0.0,
+                timing_worker_describe_geometry_inputs_ms=0.0,
+                timing_worker_describe_schema_ms=0.0,
+                timing_worker_describe_cache_hit=True,
+                **cached_description,
+            )
+            return
+
+        capabilities_start_time = time.perf_counter()
         capabilities = self.build_target_capabilities(target_object, modifier)
+        capabilities_end_time = time.perf_counter()
+
+        geometry_inputs_start_time = time.perf_counter()
         geometry_inputs = self.build_geometry_input_descriptors(target_object, modifier, capabilities)
+        geometry_inputs_end_time = time.perf_counter()
+
+        schema_start_time = time.perf_counter()
+        schema = self.build_geometry_nodes_schema_for_target(modifier)
+        schema_end_time = time.perf_counter()
+        total_end_time = schema_end_time
+
+        target_description_payload = {
+            "schema": schema,
+            "geometry_inputs": geometry_inputs,
+            "object_name": target_object.name,
+            "modifier_name": modifier.name,
+            **capabilities,
+        }
+        source_state.target_descriptions_by_id[target_id] = dict(target_description_payload)
 
         self.send_for_request(
             "TargetDescription",
             request_id=request_id,
             source_handle=source_handle,
             target_id=target_id,
-            schema=self.build_geometry_nodes_schema_for_target(modifier),
-            geometry_inputs=geometry_inputs,
-            object_name=target_object.name,
-            modifier_name=modifier.name,
-            **capabilities,
+            timing_worker_describe_total_ms=elapsed_ms(total_start_time, total_end_time),
+            timing_worker_describe_resolve_ms=elapsed_ms(resolve_start_time, resolve_end_time),
+            timing_worker_describe_capabilities_ms=elapsed_ms(capabilities_start_time, capabilities_end_time),
+            timing_worker_describe_geometry_inputs_ms=elapsed_ms(geometry_inputs_start_time, geometry_inputs_end_time),
+            timing_worker_describe_schema_ms=elapsed_ms(schema_start_time, schema_end_time),
+            timing_worker_describe_cache_hit=False,
+            **target_description_payload,
         )
 
     def get_modifier_enum_options(self, modifier, identifier: str) -> list[dict[str, object]]:
