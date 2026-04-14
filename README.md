@@ -8,6 +8,8 @@ The goal is fast iteration inside the editor: import a `.blend`, choose a Geomet
 
 This repository is the plugin source, not a full Unreal project.
 
+https://github.com/user-attachments/assets/815f6279-d9c8-49a7-938f-4f548d5df2db
+
 ## What It Does Today
 
 - Starts one shared Blender session for the Unreal Editor.
@@ -21,6 +23,8 @@ This repository is the plugin source, not a full Unreal project.
 - Discovers material slots, supports per-slot overrides, and generates placeholder bake materials when needed.
 - Restarts the worker automatically with a larger shared-memory budget when a cook outgrows the current buffer.
 - Includes lightweight smoke and perf-smoke automation coverage.
+
+https://github.com/user-attachments/assets/398e8a37-8950-42c3-b0b7-160cd1bb24e4
 
 ## Current Scope
 
@@ -49,6 +53,8 @@ This repository is the plugin source, not a full Unreal project.
 - `InstancedHierarchy`: rebuilds recoverable instances as shared prototype meshes plus HISM components.
 
 Material slot discovery and overrides apply to both live preview and baked output.
+
+https://github.com/user-attachments/assets/7d7cce7b-44c9-492c-a54f-a22fe2ec4e32
 
 ## Repo Layout
 
@@ -87,6 +93,7 @@ Headless runner:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Run-GeometryNodesBridgeSmokeSuite.ps1
 ```
+<img width="1134" height="733" alt="Automated Testing" src="https://github.com/user-attachments/assets/b9c99aab-fc85-4eb8-bd69-0c3c72648435" />
 
 ## Licensing
 
