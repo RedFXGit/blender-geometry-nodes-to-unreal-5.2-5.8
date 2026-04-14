@@ -318,6 +318,20 @@ void FGeometryNodesBridgeSessionManager::ApplySourceCacheToComponents(
             BoolToString(bCarriedEnsureCookRequest),
             BoolToString(bCarriedEnsureInstanceBakeRequest));
 
+        if (TryApplyCachedTargetDescription(Component, bPreserveInputValues, bRequestCook, bRequestInstanceBake))
+        {
+            UE_LOG(
+                LogGeometryNodesBridge,
+                Log,
+                TEXT("[GeometryNodesBridgeFlow] source_cache reused_cached_schema source='%s' component=%s preserve_input_values=%s request_cook=%s request_instance_bake=%s"),
+                *SourceHandle,
+                *DescribeBridgeComponentForLog(Component),
+                BoolToString(bPreserveInputValues),
+                BoolToString(bRequestCook),
+                BoolToString(bRequestInstanceBake));
+            return;
+        }
+
         RequestDescribeTarget(Component, bPreserveInputValues, bRequestCook, bRequestInstanceBake);
     };
 

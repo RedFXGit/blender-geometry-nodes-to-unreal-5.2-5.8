@@ -255,11 +255,28 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
             }
         }
 
-        UGeometryNodesBridgeComponent* Component = PendingRequest.Component.Get();
-        if (!IsValid(Component) || !Session.IsValid())
+        if (!Session.IsValid())
         {
             return;
         }
+
+        TArray<UGeometryNodesBridgeComponent*> RecipientComponents;
+        auto AddRecipientComponent = [&RecipientComponents](UGeometryNodesBridgeComponent* Candidate)
+        {
+            if (!IsValid(Candidate) || RecipientComponents.Contains(Candidate))
+            {
+                return;
+            }
+
+            RecipientComponents.Add(Candidate);
+        };
+
+        AddRecipientComponent(PendingRequest.Component.Get());
+        for (const TWeakObjectPtr<UGeometryNodesBridgeComponent>& WaitingComponent : PendingRequest.WaitingComponents)
+        {
+            AddRecipientComponent(WaitingComponent.Get());
+        }
+        UGeometryNodesBridgeComponent* PrimaryRecipient = RecipientComponents.IsEmpty() ? nullptr : RecipientComponents[0];
 
         const double ResponseReceivedSeconds = FPlatformTime::Seconds();
         FBridgeWorkerTimingBreakdown WorkerTimings;
@@ -268,7 +285,10 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
         double SlotNumber = 0.0;
         if (!Message.Payload.IsValid() || !Message.Payload->TryGetNumberField(TEXT("slot"), SlotNumber))
         {
-            Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Error, TEXT("CookComplete was missing a shared-memory slot."));
+            if (IsValid(PrimaryRecipient))
+            {
+                PrimaryRecipient->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Error, TEXT("CookComplete was missing a shared-memory slot."));
+            }
             return;
         }
 
@@ -276,7 +296,10 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
         FBridgeDecodedMesh DecodedMesh;
         if (!Session->GetSharedMemory().ReadMesh(static_cast<uint32>(SlotNumber), DecodedMesh))
         {
-            Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Error, TEXT("Failed to read cooked mesh from shared memory."));
+            if (IsValid(PrimaryRecipient))
+            {
+                PrimaryRecipient->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Error, TEXT("Failed to read cooked mesh from shared memory."));
+            }
             return;
         }
 
@@ -288,13 +311,40 @@ void FGeometryNodesBridgeSessionManager::HandleSessionMessageReceived(const FGeo
             CachedCook.DecodedMesh = DecodedMesh;
         }
 
+        if (RecipientComponents.IsEmpty())
+        {
+            UE_LOG(
+                LogGeometryNodesBridge,
+                Log,
+                TEXT("[GeometryNodesBridgeFlow] cook_complete cached_without_live_component request=%s source='%s' target='%s'"),
+                RequestId.IsEmpty() ? TEXT("<none>") : *RequestId,
+                *PendingRequest.SourceHandle,
+                PendingRequest.TargetId.IsEmpty() ? TEXT("<none>") : *PendingRequest.TargetId);
+            return;
+        }
+
         const double PreviewApplyStartSeconds = FPlatformTime::Seconds();
-        Component->ApplyDecodedMesh(MoveTemp(DecodedMesh));
+        for (UGeometryNodesBridgeComponent* RecipientComponent : RecipientComponents)
+        {
+            FBridgeDecodedMesh MeshForRecipient = DecodedMesh;
+            RecipientComponent->ApplyDecodedMesh(MoveTemp(MeshForRecipient));
+            RecipientComponent->SetBridgeStatus(
+                EGeometryNodesBridgeComponentStatus::Cooked,
+                FString::Printf(TEXT("Applied bridge mesh from slot %u"), static_cast<uint32>(SlotNumber)));
+        }
         const double PreviewApplyMs = (FPlatformTime::Seconds() - PreviewApplyStartSeconds) * 1000.0;
         const double ApplyFinishedSeconds = FPlatformTime::Seconds();
-        Component->SetBridgeStatus(
-            EGeometryNodesBridgeComponentStatus::Cooked,
-            FString::Printf(TEXT("Applied bridge mesh from slot %u"), static_cast<uint32>(SlotNumber)));
+        UGeometryNodesBridgeComponent* Component = PrimaryRecipient;
+
+        UE_LOG(
+            LogGeometryNodesBridge,
+            Log,
+            TEXT("[GeometryNodesBridgeFlow] cook_complete applied request=%s source='%s' target='%s' recipient_count=%d primary_component=%s"),
+            RequestId.IsEmpty() ? TEXT("<none>") : *RequestId,
+            *PendingRequest.SourceHandle,
+            PendingRequest.TargetId.IsEmpty() ? TEXT("<none>") : *PendingRequest.TargetId,
+            RecipientComponents.Num(),
+            *DescribeBridgeComponentForLog(Component));
 
         if (ShouldLogCookTimings() && PendingRequest.SentTimeSeconds > 0.0)
         {

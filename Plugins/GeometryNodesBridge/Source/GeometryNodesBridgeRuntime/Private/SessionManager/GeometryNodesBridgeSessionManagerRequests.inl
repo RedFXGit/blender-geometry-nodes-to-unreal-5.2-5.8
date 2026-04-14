@@ -224,11 +224,29 @@ bool FGeometryNodesBridgeSessionManager::RequestDescribeTarget(
     {
         FPendingRequest& ExistingRequest = Entry.Value;
         if (ExistingRequest.Kind != EBridgeManagerRequestKind::DescribeTarget
-            || ExistingRequest.Component.Get() != Component
             || ExistingRequest.SourceHandle != SourceHandle
             || ExistingRequest.TargetId != Component->TargetId)
         {
             continue;
+        }
+
+        const UGeometryNodesBridgeComponent* ExistingComponent = ExistingRequest.Component.Get();
+        const bool bShouldReplacePendingComponent =
+            ExistingComponent == nullptr
+            || (ExistingComponent != Component
+                && IsPreviewBridgeComponent(ExistingComponent)
+                && !IsPreviewBridgeComponent(Component));
+        const bool bCanCoalesce =
+            ExistingComponent == Component
+            || bShouldReplacePendingComponent;
+        if (!bCanCoalesce)
+        {
+            continue;
+        }
+
+        if (bShouldReplacePendingComponent)
+        {
+            ExistingRequest.Component = Component;
         }
 
         ExistingRequest.bPreserveInputValues |= bPreserveInputValues;
@@ -237,10 +255,12 @@ bool FGeometryNodesBridgeSessionManager::RequestDescribeTarget(
         UE_LOG(
             LogGeometryNodesBridge,
             Log,
-            TEXT("[GeometryNodesBridgeFlow] describe coalesced_into=%s source='%s' component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
+            TEXT("[GeometryNodesBridgeFlow] describe coalesced_into=%s source='%s' existing_component=%s incoming_component=%s replaced_component=%s preserve_input_values=%s cook_after_describe=%s instance_bake_after_describe=%s"),
             *Entry.Key,
             *SourceHandle,
+            *DescribeBridgeComponentForLog(ExistingComponent),
             *DescribeBridgeComponentForLog(Component),
+            BoolToString(bShouldReplacePendingComponent),
             BoolToString(ExistingRequest.bPreserveInputValues),
             BoolToString(ExistingRequest.bRequestCookAfterDescribe),
             BoolToString(ExistingRequest.bRequestInstanceBakeAfterDescribe));
@@ -350,6 +370,65 @@ bool FGeometryNodesBridgeSessionManager::SendCookRequest(UGeometryNodesBridgeCom
         return true;
     }
 
+    FString CookCacheKey;
+    BuildCookCacheKey(
+        SourceHandle,
+        Component->TargetId,
+        Component->InputSchema,
+        Component->InputValues,
+        CurveHash,
+        GeometryBindingsHash,
+        CookCacheKey);
+
+    if (!CookCacheKey.IsEmpty())
+    {
+        for (TPair<FString, FPendingRequest>& Entry : PendingRequests)
+        {
+            FPendingRequest& ExistingRequest = Entry.Value;
+            if (ExistingRequest.Kind != EBridgeManagerRequestKind::CookTarget
+                || ExistingRequest.CookCacheKey != CookCacheKey)
+            {
+                continue;
+            }
+
+            ExistingRequest.WaitingComponents.RemoveAll([](const TWeakObjectPtr<UGeometryNodesBridgeComponent>& EntryComponent)
+            {
+                return !EntryComponent.IsValid();
+            });
+
+            const bool bIsPrimaryComponent = ExistingRequest.Component.Get() == Component;
+            const bool bIsWaitingComponent = ExistingRequest.WaitingComponents.ContainsByPredicate([Component](const TWeakObjectPtr<UGeometryNodesBridgeComponent>& EntryComponent)
+            {
+                return EntryComponent.IsValid() && EntryComponent.Get() == Component;
+            });
+
+            if (!bIsPrimaryComponent && !bIsWaitingComponent)
+            {
+                if (!IsValid(ExistingRequest.Component.Get()))
+                {
+                    ExistingRequest.Component = Component;
+                }
+                else
+                {
+                    ExistingRequest.WaitingComponents.Add(Component);
+                }
+            }
+
+            Component->SetBridgeStatus(EGeometryNodesBridgeComponentStatus::Cooking, TEXT("Waiting for matching bridge cook already in progress."));
+            UE_LOG(
+                LogGeometryNodesBridge,
+                Log,
+                TEXT("[GeometryNodesBridgeFlow] cook coalesced_into=%s source='%s' target='%s' component=%s primary_component=%s waiter_count=%d"),
+                *Entry.Key,
+                *SourceHandle,
+                *Component->TargetId,
+                *DescribeBridgeComponentForLog(Component),
+                *DescribeBridgeComponentForLog(ExistingRequest.Component.Get()),
+                ExistingRequest.WaitingComponents.Num());
+            return true;
+        }
+    }
+
     Component->RefreshComponentHandle();
     const FString RequestId = MakeRequestId();
     TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
@@ -377,14 +456,7 @@ bool FGeometryNodesBridgeSessionManager::SendCookRequest(UGeometryNodesBridgeCom
     PendingRequest.ScenarioId = Component->GetAutomationScenarioId();
     PendingRequest.ActionKind = Component->GetAutomationActionKind();
     PendingRequest.IterationIndex = Component->GetAutomationIterationIndex();
-    BuildCookCacheKey(
-        SourceHandle,
-        Component->TargetId,
-        Component->InputSchema,
-        Component->InputValues,
-        CurveHash,
-        GeometryBindingsHash,
-        PendingRequest.CookCacheKey);
+    PendingRequest.CookCacheKey = CookCacheKey;
     PendingRequest.SentTimeSeconds = FPlatformTime::Seconds();
     PendingRequests.Add(RequestId, MoveTemp(PendingRequest));
 

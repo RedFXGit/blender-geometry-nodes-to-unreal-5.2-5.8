@@ -18,7 +18,7 @@ public:
     bool RestartSession();
     void Shutdown();
 
-    void NotifySourceChanged(UGeometryNodesBridgeComponent* Component);
+    void NotifySourceChanged(UGeometryNodesBridgeComponent* Component, bool bRequestCookAfterLoad = false);
     void NotifyTargetChanged(UGeometryNodesBridgeComponent* Component);
     void RefreshComponentSchema(UGeometryNodesBridgeComponent* Component, bool bForceReload);
     void RequestCook(UGeometryNodesBridgeComponent* Component);
@@ -64,6 +64,7 @@ private:
     {
         EBridgeManagerRequestKind Kind = EBridgeManagerRequestKind::EnsureSourceLoaded;
         TWeakObjectPtr<UGeometryNodesBridgeComponent> Component;
+        TArray<TWeakObjectPtr<UGeometryNodesBridgeComponent>> WaitingComponents;
         FString SourceHandle;
         FString TargetId;
         FString CookCacheKey;

@@ -102,10 +102,66 @@ void FGeometryNodesBridgeSessionManager::ReleaseComponentState(UGeometryNodesBri
 
     for (auto It = PendingRequests.CreateIterator(); It; ++It)
     {
-        if (It.Value().Component.Get() == Component)
+        FPendingRequest& PendingRequest = It.Value();
+        PendingRequest.WaitingComponents.RemoveAll([Component](const TWeakObjectPtr<UGeometryNodesBridgeComponent>& Entry)
         {
-            It.RemoveCurrent();
+            return !Entry.IsValid() || Entry.Get() == Component;
+        });
+
+        if (PendingRequest.Component.Get() != Component)
+        {
+            continue;
         }
+
+        if (PendingRequest.Kind == EBridgeManagerRequestKind::CookTarget
+            || PendingRequest.Kind == EBridgeManagerRequestKind::EnsureSourceLoaded
+            || PendingRequest.Kind == EBridgeManagerRequestKind::DescribeTarget)
+        {
+            UGeometryNodesBridgeComponent* PromotedComponent = nullptr;
+            for (int32 WaitingIndex = PendingRequest.WaitingComponents.Num() - 1; WaitingIndex >= 0; --WaitingIndex)
+            {
+                UGeometryNodesBridgeComponent* WaitingComponent = PendingRequest.WaitingComponents[WaitingIndex].Get();
+                PendingRequest.WaitingComponents.RemoveAtSwap(WaitingIndex);
+                if (IsValid(WaitingComponent) && PromotedComponent == nullptr)
+                {
+                    PromotedComponent = WaitingComponent;
+                }
+            }
+
+            if (IsValid(PromotedComponent))
+            {
+                PendingRequest.Component = PromotedComponent;
+                const TCHAR* RequestKindLabel =
+                    PendingRequest.Kind == EBridgeManagerRequestKind::CookTarget
+                        ? TEXT("cook")
+                        : (PendingRequest.Kind == EBridgeManagerRequestKind::EnsureSourceLoaded ? TEXT("ensure") : TEXT("describe"));
+                UE_LOG(
+                    LogGeometryNodesBridge,
+                    Log,
+                    TEXT("[GeometryNodesBridgeFlow] %s primary_released promoted_component=%s"),
+                    RequestKindLabel,
+                    *DescribeBridgeComponentForLog(PromotedComponent));
+            }
+            else
+            {
+                PendingRequest.Component = nullptr;
+                const TCHAR* RequestKindLabel =
+                    PendingRequest.Kind == EBridgeManagerRequestKind::CookTarget
+                        ? TEXT("cook")
+                        : (PendingRequest.Kind == EBridgeManagerRequestKind::EnsureSourceLoaded ? TEXT("ensure") : TEXT("describe"));
+                UE_LOG(
+                    LogGeometryNodesBridge,
+                    Log,
+                    TEXT("[GeometryNodesBridgeFlow] %s primary_released request_retained_without_live_component source='%s' target='%s'"),
+                    RequestKindLabel,
+                    *PendingRequest.SourceHandle,
+                    PendingRequest.TargetId.IsEmpty() ? TEXT("<none>") : *PendingRequest.TargetId);
+            }
+
+            continue;
+        }
+
+        It.RemoveCurrent();
     }
 
     if (!Session.IsValid() || !Session->IsConnected())
@@ -167,7 +223,7 @@ void FGeometryNodesBridgeSessionManager::TrackComponentState(UGeometryNodesBridg
     }
 }
 
-void FGeometryNodesBridgeSessionManager::NotifySourceChanged(UGeometryNodesBridgeComponent* Component)
+void FGeometryNodesBridgeSessionManager::NotifySourceChanged(UGeometryNodesBridgeComponent* Component, const bool bRequestCookAfterLoad)
 {
     if (!IsValid(Component))
     {
@@ -195,7 +251,15 @@ void FGeometryNodesBridgeSessionManager::NotifySourceChanged(UGeometryNodesBridg
         return;
     }
 
-    RequestEnsureSourceLoaded(Component, false, false, false);
+    const FString SourceHandle = Component->GetSourceHandle();
+    const FSourceCache* SourceCache = SourceCaches.Find(SourceHandle);
+    if (SourceCache != nullptr && SourceCache->bLoaded)
+    {
+        ApplySourceCacheToComponents(SourceHandle, bRequestCookAfterLoad, false, Component);
+        return;
+    }
+
+    RequestEnsureSourceLoaded(Component, false, bRequestCookAfterLoad, false);
 }
 
 void FGeometryNodesBridgeSessionManager::WarmSourceOnPreviewDrag(UGeometryNodesBridgeSource* Source, UGeometryNodesBridgeComponent* PreviewComponent)
