@@ -35,6 +35,7 @@ This repository is the plugin source, not a full Unreal project.
 2. Enable the `GeometryNodesBridge` plugin.
 3. Open `Edit > Project Settings > Plugins > Geometry Nodes Bridge`.
 4. Confirm `Blender Executable Path`, `Bake Root Content Path`, and optionally `Automatically Start Session On Editor Launch`.
+   If you want to keep the Blender-side worker separate from the plugin package, set `Bridge Worker Script Path` to an external `geometry_nodes_bridge_server.py`.
 5. Start the session from `Tools > Geometry Nodes Bridge` if auto-start is disabled.
 6. Import a `.blend` file into the Content Browser, or create a `GeometryNodesBridgeSource` asset and set its blend file.
 7. Drag the source into the level to spawn a `GeometryNodesBridgeActor`.
@@ -55,7 +56,9 @@ Material slot discovery and overrides apply to both live preview and baked outpu
 - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime` - runtime, session, and component code
 - `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor` - import pipeline, details UI, bake tooling, and automation tests
 - `Plugins/GeometryNodesBridge/Scripts/geometry_nodes_bridge_server.py` - Blender worker entry point
+- `blender-worker` - phase-1 staging area for packaging the Blender worker separately from the Unreal plugin
 - `scripts/Sync-GeometryNodesBridgeToProject.ps1` - sync the plugin into an external Unreal test project
+- `scripts/Stage-GeometryNodesBridgeWorker.ps1` - copy the Blender worker into a standalone staging folder
 - `scripts/Watch-GeometryNodesBridgeToProject.ps1` - watch and re-sync during development
 - `scripts/Run-GeometryNodesBridgeSmokeSuite.ps1` - run smoke and perf-smoke automation
 - `AGENTS.md` - consolidated deeper notes for paths, workflows, and validation
@@ -72,6 +75,12 @@ For watch mode:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Watch-GeometryNodesBridgeToProject.ps1
+```
+
+To stage a standalone Blender worker package from this repo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Stage-GeometryNodesBridgeWorker.ps1
 ```
 
 ## Automation

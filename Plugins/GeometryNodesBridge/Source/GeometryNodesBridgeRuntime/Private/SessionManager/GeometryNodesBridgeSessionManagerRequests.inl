@@ -504,12 +504,57 @@ FString FGeometryNodesBridgeSessionManager::MakeRequestId()
     return FString::Printf(TEXT("Request_%llu"), NextRequestId++);
 }
 
-FString FGeometryNodesBridgeSessionManager::ResolveWorkerScriptPath() const
+FString FGeometryNodesBridgeSessionManager::ResolveWorkerScriptPath(FString& OutResolutionNote) const
 {
-    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeometryNodesBridge")))
+    OutResolutionNote.Reset();
+
+    FString ConfiguredPath;
+    if (const UGeometryNodesBridgeSettings* Settings = GetDefault<UGeometryNodesBridgeSettings>())
     {
-        return FPaths::Combine(Plugin->GetBaseDir(), TEXT("Scripts/geometry_nodes_bridge_server.py"));
+        ConfiguredPath = Settings->WorkerScriptPath.FilePath;
     }
 
+    ConfiguredPath = ConfiguredPath.TrimStartAndEnd();
+    if (!ConfiguredPath.IsEmpty())
+    {
+        if (FPaths::IsRelative(ConfiguredPath))
+        {
+            ConfiguredPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir(), ConfiguredPath);
+        }
+
+        FPaths::NormalizeFilename(ConfiguredPath);
+        if (FPaths::DirectoryExists(ConfiguredPath))
+        {
+            ConfiguredPath = FPaths::Combine(ConfiguredPath, TEXT("geometry_nodes_bridge_server.py"));
+            FPaths::NormalizeFilename(ConfiguredPath);
+        }
+
+        if (IFileManager::Get().FileExists(*ConfiguredPath))
+        {
+            return ConfiguredPath;
+        }
+
+        OutResolutionNote = FString::Printf(
+            TEXT("Configured Bridge Worker Script Path does not exist: %s"),
+            *ConfiguredPath);
+        return FString();
+    }
+
+    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GeometryNodesBridge")))
+    {
+        FString BundledPath = FPaths::Combine(Plugin->GetBaseDir(), TEXT("Scripts/geometry_nodes_bridge_server.py"));
+        FPaths::NormalizeFilename(BundledPath);
+        if (IFileManager::Get().FileExists(*BundledPath))
+        {
+            return BundledPath;
+        }
+
+        OutResolutionNote = FString::Printf(
+            TEXT("Bundled Blender bridge worker script was not found: %s"),
+            *BundledPath);
+        return FString();
+    }
+
+    OutResolutionNote = TEXT("Could not locate the GeometryNodesBridge plugin to resolve the bundled Blender bridge worker script.");
     return FString();
 }

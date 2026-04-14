@@ -1,10 +1,13 @@
 void FGeometryNodesBridgeSessionManager::StartSessionInternal()
 {
     UGeometryNodesBridgeSettings* Settings = GetMutableDefault<UGeometryNodesBridgeSettings>();
-    const FString WorkerScriptPath = ResolveWorkerScriptPath();
+    FString WorkerScriptResolutionNote;
+    const FString WorkerScriptPath = ResolveWorkerScriptPath(WorkerScriptResolutionNote);
     if (WorkerScriptPath.IsEmpty())
     {
-        LastSessionMessage = TEXT("Could not resolve Blender bridge worker script path.");
+        LastSessionMessage = WorkerScriptResolutionNote.IsEmpty()
+            ? TEXT("Could not resolve Blender bridge worker script path.")
+            : WorkerScriptResolutionNote;
         SessionState = EGeometryNodesBridgeConnectionState::Error;
         RefreshAllComponentConnectionStates();
         return;

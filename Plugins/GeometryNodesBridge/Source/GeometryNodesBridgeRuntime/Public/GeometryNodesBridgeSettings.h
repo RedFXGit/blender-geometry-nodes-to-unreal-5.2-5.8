@@ -32,6 +32,16 @@ public:
         Config,
         Category = "Session",
         meta = (
+            DisplayName = "Bridge Worker Script Path",
+            ToolTip = "Optional external path to geometry_nodes_bridge_server.py. Leave empty to use the bundled worker under the GeometryNodesBridge plugin."
+        ))
+    FFilePath WorkerScriptPath;
+
+    UPROPERTY(
+        EditAnywhere,
+        Config,
+        Category = "Session",
+        meta = (
             ClampMin = "1048576",
             DisplayName = "Shared Memory Bytes (Total)",
             ToolTip = "Total shared-memory budget across both bridge slots. The default is 250 MiB per slot, 500 MiB total."

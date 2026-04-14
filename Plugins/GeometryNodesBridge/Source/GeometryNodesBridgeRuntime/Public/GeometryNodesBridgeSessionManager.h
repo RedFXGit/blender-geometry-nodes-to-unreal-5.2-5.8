@@ -123,7 +123,7 @@ private:
     void TrackComponentState(UGeometryNodesBridgeComponent* Component);
 
     FString MakeRequestId();
-    FString ResolveWorkerScriptPath() const;
+    FString ResolveWorkerScriptPath(FString& OutResolutionNote) const;
 
 private:
     TSharedPtr<FGeometryNodesBridgeWorkerSession> Session;
