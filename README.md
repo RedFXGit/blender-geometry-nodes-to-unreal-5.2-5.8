@@ -33,6 +33,8 @@ https://github.com/user-attachments/assets/398e8a37-8950-42c3-b0b7-160cd1bb24e4
 - Source of truth lives under `Plugins/GeometryNodesBridge`
 - Validated in the current repo against Unreal Engine 5.7 and Blender 5.1 on the local development machine
 
+https://github.com/user-attachments/assets/46c2ffc6-8911-4b87-8430-71fe32b62f84
+
 ## Quick Start
 
 1. Copy or sync `Plugins/GeometryNodesBridge` into a UE 5.7 C++ project.
