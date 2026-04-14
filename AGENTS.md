@@ -8,16 +8,18 @@ Validated on `2026-04-13` against the current repository, `README.md`, plugin so
 
 - Repo type: Unreal plugin repo, not a full `.uproject`.
 - Primary plugin root: `Plugins/GeometryNodesBridge`
+- Worker root: `Plugins/GeometryNodesBridgeWorker`
 - Runtime module: `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime`
 - Editor module: `Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeEditor`
-- Blender worker: `Plugins/GeometryNodesBridge/Scripts/geometry_nodes_bridge_server.py`
-- Worker staging root: `blender-worker`
+- Blender worker entry: `Plugins/GeometryNodesBridgeWorker/geometry_nodes_bridge_server.py`
 - Helper scripts:
   - `scripts/Sync-GeometryNodesBridgeToProject.ps1`
-  - `scripts/Stage-GeometryNodesBridgeWorker.ps1`
   - `scripts/Watch-GeometryNodesBridgeToProject.ps1`
   - `scripts/Run-GeometryNodesBridgeSmokeSuite.ps1`
   - `scripts/Run-GeometryNodesBridgePerfLoop.ps1`
+- Split licensing:
+  - MIT for plugin-side files
+  - GPL-3.0-or-later for the Blender worker under `Plugins/GeometryNodesBridgeWorker`
 
 ## Current Product State
 
@@ -78,7 +80,7 @@ Important source files that exist today:
 - Resolve repo paths from the current workspace first. Older docs and some helper scripts still hard-code the previous repo directory name `blender-unreal-bridge`.
 - Treat repo-relative facts as authoritative. Treat machine-specific paths as examples that must be re-checked before use.
 - Prefer editing the plugin under `Plugins/GeometryNodesBridge`; the copied plugin inside a separate Unreal project is a synced test target, not the source of truth.
-- The bundled worker under `Plugins/GeometryNodesBridge/Scripts` remains the current source of truth; `blender-worker` is the phase-1 staging area for packaging an external worker copy.
+- Prefer editing the worker under `Plugins/GeometryNodesBridgeWorker`; there is no staged duplicate worker path in the repo now.
 - If changing C++ code, expect an Unreal rebuild.
 - If changing `geometry_nodes_bridge_server.py`, expect the shared Blender session to need a restart.
 
@@ -115,26 +117,15 @@ Validation note:
 - The sync script defaults were updated to this repo's current workspace path.
 - If this repo is cloned elsewhere, override `-SourcePlugin` instead of assuming the checked-in local default matches that machine.
 
-## Worker Packaging Workflow
+## Worker Path Workflow
 
-Use the bundled plugin worker as the source of truth and stage a separate worker package when you need an external install path.
-
-Script:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Stage-GeometryNodesBridgeWorker.ps1
-```
-
-What it does today:
-
-- Copies `geometry_nodes_bridge_server.py` and `geometry_nodes_bridge_worker` into `blender-worker\staging\GeometryNodesBridgeWorker`.
-- Copies `blender-worker\README.md` into the staged worker folder.
-- Removes `__pycache__` and `*.pyc` from the staged output.
+Use the worker under `Plugins\GeometryNodesBridgeWorker` as the source of truth.
 
 Runtime note:
 
-- `Bridge Worker Script Path` in project settings can point at an external staged worker.
-- Leaving that setting empty keeps using the bundled plugin worker.
+- `Bridge Worker Script Path` in Unreal must point at `geometry_nodes_bridge_server.py`.
+- The plugin no longer falls back to a bundled worker path.
+- The repo path to use during local development is `Plugins\GeometryNodesBridgeWorker\geometry_nodes_bridge_server.py`.
 
 ## Smoke And Perf Test Workflow
 

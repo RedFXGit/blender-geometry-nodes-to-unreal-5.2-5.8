@@ -1,0 +1,27 @@
+This repository uses a split-license model.
+
+MIT
+
+- `Plugins/GeometryNodesBridge/**`
+- `scripts/**`
+- `README.md`
+- `AGENTS.md`
+- `Licensing.md`
+- `.gitignore`
+- `.gitattributes`
+
+The MIT text for the plugin-side tree is in:
+
+- `Plugins/GeometryNodesBridge/LICENSE-MIT.txt`
+
+GPL-3.0-or-later
+
+- `Plugins/GeometryNodesBridgeWorker/**`
+
+The GNU GPL v3 text used for the Blender worker tree is in:
+
+- `Plugins/GeometryNodesBridgeWorker/LICENSE-GPL-3.0-or-later.txt`
+
+If a file or descendant directory includes a more specific license notice, that more specific notice controls.
+
+See `Licensing.md` for the path mapping and packaging notes.

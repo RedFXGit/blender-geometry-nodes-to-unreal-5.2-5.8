@@ -33,7 +33,7 @@ public:
         Category = "Session",
         meta = (
             DisplayName = "Bridge Worker Script Path",
-            ToolTip = "Optional external path to geometry_nodes_bridge_server.py. Leave empty to use the bundled worker under the GeometryNodesBridge plugin."
+            ToolTip = "Path to geometry_nodes_bridge_server.py, or to a directory that contains it. This setting is required."
         ))
     FFilePath WorkerScriptPath;
 

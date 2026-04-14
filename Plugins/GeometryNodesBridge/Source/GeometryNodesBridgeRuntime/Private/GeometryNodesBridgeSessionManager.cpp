@@ -7,7 +7,6 @@
 #include "GeometryNodesBridgeSource.h"
 #include "GeometryNodesBridgeWorkerSession.h"
 #include "Dom/JsonObject.h"
-#include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/CommandLine.h"

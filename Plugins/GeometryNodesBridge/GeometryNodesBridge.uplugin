@@ -5,7 +5,7 @@
   "FriendlyName": "Geometry Nodes Bridge",
   "Description": "Shared-memory Blender to Unreal bridge with live mesh cooking and Geometry Nodes input reflection.",
   "Category": "Rendering",
-  "CreatedBy": "Codex",
+  "CreatedBy": "Tristan Lassiter",
   "CanContainContent": false,
   "Installed": false,
   "Modules": [
