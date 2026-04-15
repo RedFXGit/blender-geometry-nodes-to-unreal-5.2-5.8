@@ -112,8 +112,18 @@ See `LICENSE` and `Licensing.md` for the exact path mapping.
 - In-place shared-memory remap without restarting the worker
 - Custom render proxy / RDG upload path
 
-## More Detail
+## Thanks
 
-`README.md` is intentionally high level.
+Without these wonderful people sharing creations into the world I would have no inspiration
 
-For repo-validated paths, deeper workflow notes, testing details, and manual validation guidance, see `AGENTS.md`.
+Pavel Oliva
+https://paveloliva.gumroad.com/l/buildify
+
+Shahriar Shahrabi
+https://github.com/IRCSS/Blender-Geometry-Node-French-Houses
+
+Ian Fontova
+https://ianfontova.gumroad.com/l/FantasyHutGenerator
+
+Miettinen Jesse
+https://blenderesse.gumroad.com/
