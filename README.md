@@ -6,7 +6,7 @@ The goal is fast iteration inside the editor: import a `.blend`, choose a Geomet
 
 > `.blend` source -> `GeometryNodesBridgeSource` asset -> `GeometryNodesBridgeActor` -> live cook preview -> baked output
 
-This repository is the plugin source, not a full Unreal project.
+This repository is the plugin source, not a full Unreal project. All shown geometry nodes are not created by me, see #Thanks for achknowledgement.
 
 https://github.com/user-attachments/assets/52baceec-bde3-4e53-af80-4063b05e3fc0
 
