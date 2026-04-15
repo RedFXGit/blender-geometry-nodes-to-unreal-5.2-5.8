@@ -8,7 +8,7 @@ The goal is fast iteration inside the editor: import a `.blend`, choose a Geomet
 
 This repository is the plugin source, not a full Unreal project.
 
-https://github.com/user-attachments/assets/815f6279-d9c8-49a7-938f-4f548d5df2db
+https://github.com/user-attachments/assets/52baceec-bde3-4e53-af80-4063b05e3fc0
 
 ## What It Does Today
 
