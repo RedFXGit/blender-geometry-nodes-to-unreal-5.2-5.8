@@ -112,6 +112,9 @@ See `LICENSE` and `Licensing.md` for the exact path mapping.
 - In-place shared-memory remap without restarting the worker
 - Custom render proxy / RDG upload path
 
+## AI
+Made with Codex
+
 ## Thanks
 
 Without these wonderful people sharing creations into the world I would have no inspiration
