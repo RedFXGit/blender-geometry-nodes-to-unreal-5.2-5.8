@@ -1,0 +1,119 @@
+{
+    "version": "2.1.0",
+    "$schema": "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.5.json",
+    "runs": [
+        {
+            "results": [
+                {
+                    "ruleId": "C4996",
+                    "message": {
+                        "text": "'USplineComponent::GetOnSplineChanged': Spline change notifications are experimental while the API is under active development. - This API is experimental. As such, there is no guarantee that it won't change or be removed in future releases. Please use at your own risk."
+                    },
+                    "analysisTarget": {
+                        "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                    },
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {
+                                    "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                                },
+                                "region": {
+                                    "startLine": 770,
+                                    "startColumn": 30,
+                                    "snippet": {
+                                        "text": "            SplineComponent->GetOnSplineChanged().RemoveAll(this);"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "ruleId": "C4996",
+                    "message": {
+                        "text": "'USplineComponent::GetOnSplineUpdated': Spline update notifications are experimental while the API is under active development. - This API is experimental. As such, there is no guarantee that it won't change or be removed in future releases. Please use at your own risk."
+                    },
+                    "analysisTarget": {
+                        "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                    },
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {
+                                    "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                                },
+                                "region": {
+                                    "startLine": 771,
+                                    "startColumn": 30,
+                                    "snippet": {
+                                        "text": "            SplineComponent->GetOnSplineUpdated().RemoveAll(this);"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "ruleId": "C4996",
+                    "message": {
+                        "text": "'USplineComponent::GetOnSplineChanged': Spline change notifications are experimental while the API is under active development. - This API is experimental. As such, there is no guarantee that it won't change or be removed in future releases. Please use at your own risk."
+                    },
+                    "analysisTarget": {
+                        "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                    },
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {
+                                    "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                                },
+                                "region": {
+                                    "startLine": 965,
+                                    "startColumn": 32,
+                                    "snippet": {
+                                        "text": "        ActiveSplineComponent->GetOnSplineChanged().AddUObject(this, &UGeometryNodesBridgeComponent::HandleBridgeSplineChanged);"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "ruleId": "C4996",
+                    "message": {
+                        "text": "'USplineComponent::GetOnSplineUpdated': Spline update notifications are experimental while the API is under active development. - This API is experimental. As such, there is no guarantee that it won't change or be removed in future releases. Please use at your own risk."
+                    },
+                    "analysisTarget": {
+                        "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                    },
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {
+                                    "uri": "file:///Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeComponent.cpp"
+                                },
+                                "region": {
+                                    "startLine": 966,
+                                    "startColumn": 32,
+                                    "snippet": {
+                                        "text": "        ActiveSplineComponent->GetOnSplineUpdated().AddUObject(this, &UGeometryNodesBridgeComponent::HandleBridgeSplineChanged);"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+            "tool": {
+                "driver": {
+                    "name": "MSVC",
+                    "shortDescription": {
+                        "text": "Microsoft Visual C++ Compiler Warnings/Errors"
+                    },
+                    "informationUri": "https://docs.microsoft.com/cpp/error-messages/compiler-errors-1/c-cpp-build-errors"
+                }
+            }
+        }
+    ]
+}

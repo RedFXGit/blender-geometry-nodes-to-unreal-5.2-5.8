@@ -37,6 +37,47 @@ def get_supported_gn_socket_type(socket_type: str) -> str | None:
     return None
 
 
+def get_modifier_input(modifier, identifier: str):
+    """Return modifier.properties.inputs.<identifier>, or None if unavailable."""
+    properties = getattr(modifier, "properties", None)
+    inputs = getattr(properties, "inputs", None)
+    if inputs is None:
+        return None
+
+    return getattr(inputs, identifier, None)
+
+
+def get_modifier_input_value(modifier, identifier: str, default=None):
+    input_entry = get_modifier_input(modifier, identifier)
+    if input_entry is None:
+        return default
+
+    try:
+        return input_entry.value
+    except (AttributeError, TypeError):
+        return default
+
+
+def reset_modifier_input_to_value(modifier, identifier: str) -> None:
+    """Replaces the old `<id>_use_attribute = False` / `<id>_attribute_name = ""` resets."""
+    input_entry = get_modifier_input(modifier, identifier)
+    if input_entry is None:
+        return
+
+    if hasattr(input_entry, "type"):
+        input_entry.type = "VALUE"
+    if hasattr(input_entry, "attribute_name"):
+        input_entry.attribute_name = ""
+
+
+def set_modifier_input_value(modifier, identifier: str, value) -> None:
+    input_entry = get_modifier_input(modifier, identifier)
+    if input_entry is None:
+        raise RuntimeError(f"Geometry Nodes modifier has no input property '{identifier}'")
+
+    input_entry.value = value
+
+
 def get_numeric_sequence_length(value) -> int | None:
     if value is None or isinstance(value, (str, bytes)):
         return None

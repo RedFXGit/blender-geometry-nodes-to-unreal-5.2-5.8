@@ -1,0 +1,23 @@
+{
+	"RemapUnityFiles": 
+	{
+		"Module.GeometryNodesBridgeEditor.cpp.obj": [
+			"GeometryNodesBridgeEditor.init.gen.cpp.obj",
+			"PerModuleInline.gen.cpp.obj",
+			"ActorFactoryGeometryNodesBridgeSource.cpp.obj",
+			"AssetDefinition_GeometryNodesBridgeSource.cpp.obj",
+			"GeometryNodesBridgeActorDetails.cpp.obj",
+			"GeometryNodesBridgeBakeService.cpp.obj",
+			"GeometryNodesBridgeEditorModule.cpp.obj",
+			"GeometryNodesBridgeEditorStyle.cpp.obj",
+			"GeometryNodesBridgePropertyBagBuilder.cpp.obj",
+			"GeometryNodesBridgePropertyBagDetails.cpp.obj",
+			"GeometryNodesBridgeSourceFactory.cpp.obj",
+			"GeometryNodesBridgeAutomationTestSupport.cpp.obj",
+			"GeometryNodesBridgeComponentAutomation.cpp.obj",
+			"GeometryNodesBridgeObservedGeometryAutomation.cpp.obj",
+			"GeometryNodesBridgePerfAutomation.cpp.obj",
+			"GeometryNodesBridgeSmokeAutomation.cpp.obj"
+		]
+	}
+}

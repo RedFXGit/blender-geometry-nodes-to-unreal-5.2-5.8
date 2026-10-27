@@ -1,0 +1,27 @@
+{
+	"RemapUnityFiles": 
+	{
+		"Module.GeometryNodesBridgeRuntime.cpp.obj": [
+			"GeometryNodesBridgeComponent.gen.cpp.obj",
+			"GeometryNodesBridgeComponentTypes.gen.cpp.obj",
+			"GeometryNodesBridgeMoveProbeComponent.gen.cpp.obj",
+			"GeometryNodesBridgeProtocol.gen.cpp.obj",
+			"GeometryNodesBridgeRuntime.init.gen.cpp.obj",
+			"PerModuleInline.gen.cpp.obj",
+			"GeometryNodesBridgeActor.cpp.obj",
+			"GeometryNodesBridgeComponent.cpp.obj",
+			"GeometryNodesBridgeComponentInputs.cpp.obj",
+			"GeometryNodesBridgeComponentMaterials.cpp.obj",
+			"GeometryNodesBridgeMessages.cpp.obj",
+			"GeometryNodesBridgeMoveProbeComponent.cpp.obj",
+			"GeometryNodesBridgePipeClient.cpp.obj",
+			"GeometryNodesBridgeProtocol.cpp.obj",
+			"GeometryNodesBridgeRuntimeModule.cpp.obj",
+			"GeometryNodesBridgeSessionManager.cpp.obj",
+			"GeometryNodesBridgeSettings.cpp.obj",
+			"GeometryNodesBridgeSharedMemory.cpp.obj",
+			"GeometryNodesBridgeSource.cpp.obj",
+			"GeometryNodesBridgeWorkerSession.cpp.obj"
+		]
+	}
+}

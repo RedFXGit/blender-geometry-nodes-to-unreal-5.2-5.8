@@ -3,6 +3,7 @@
 #include "GeometryNodesBridgeRuntimeModule.h"
 #include "Engine/UserDefinedEnum.h"
 #include "Misc/SecureHash.h"
+#include "Types/AttributeStorage.h"
 #include "UObject/UObjectGlobals.h"
 
 namespace
@@ -222,7 +223,7 @@ UUserDefinedEnum* UGeometryNodesBridgeComponent::GetOrCreateRuntimeEnum(const FB
     }
 
     TArray<TPair<FName, int64>> EmptyNames;
-    RuntimeEnum->SetEnums(EmptyNames, UEnum::ECppForm::Namespaced);
+    RuntimeEnum->SetEnums(EmptyNames, UEnum::ECppForm::Namespaced, UEnum::EUnderlyingType::int32, EEnumFlags::None, UEnum::EAddMaxKeyIfMissing::No);
 
     TArray<TPair<FName, int64>> Names;
     Names.Reserve(Entry.EnumOptions.Num());
@@ -250,7 +251,7 @@ UUserDefinedEnum* UGeometryNodesBridgeComponent::GetOrCreateRuntimeEnum(const FB
         }
     }
 
-    if (!RuntimeEnum->SetEnums(Names, UEnum::ECppForm::Namespaced))
+    if (!RuntimeEnum->SetEnums(EmptyNames, UEnum::ECppForm::Namespaced, UEnum::EUnderlyingType::int32, EEnumFlags::None, UEnum::EAddMaxKeyIfMissing::No))
     {
         UE_LOG(LogGeometryNodesBridge, Warning, TEXT("Failed to configure runtime enum for bridge input '%s'."), *Entry.Id.ToString());
         return nullptr;

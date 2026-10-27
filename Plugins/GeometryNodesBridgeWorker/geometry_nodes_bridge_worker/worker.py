@@ -21,11 +21,15 @@ from .common import (
     coerce_numeric_sequence,
     elapsed_ms,
     get_interface_item_category_path,
+    get_modifier_input,
+    get_modifier_input_value,
     get_numeric_sequence_length,
     get_supported_gn_socket_type,
     make_extract_timing_breakdown,
     normalize_enum_items,
     np,
+    reset_modifier_input_to_value,
+    set_modifier_input_value,
     to_float_list,
 )
 from .shared_memory import (
@@ -654,34 +658,38 @@ class BridgeWorker:
                 entry["description"] = description
 
             if input_type == "float":
-                entry["default"] = float(modifier.get(item.identifier, getattr(item, "default_value", 0.0)))
+                entry["default"] = float(get_modifier_input_value(modifier, item.identifier, getattr(item, "default_value", 0.0)))
                 entry["min"] = float(getattr(item, "min_value", -100000.0))
                 entry["max"] = float(getattr(item, "max_value", 100000.0))
             elif input_type == "integer":
-                entry["default"] = int(modifier.get(item.identifier, getattr(item, "default_value", 0)))
+                entry["default"] = int(get_modifier_input_value(modifier, item.identifier, getattr(item, "default_value", 0)))
                 entry["min"] = int(getattr(item, "min_value", -2147483648))
                 entry["max"] = int(getattr(item, "max_value", 2147483647))
             elif input_type == "boolean":
-                entry["default_bool"] = bool(modifier.get(item.identifier, getattr(item, "default_value", False)))
+                entry["default_bool"] = bool(get_modifier_input_value(modifier, item.identifier, getattr(item, "default_value", False)))
             elif input_type == "vector3":
                 entry["default_vector"] = to_float_list(
-                    modifier.get(item.identifier, getattr(item, "default_value", (0.0, 0.0, 0.0))),
+                    get_modifier_input_value(modifier, item.identifier, getattr(item, "default_value", (0.0, 0.0, 0.0))),
                     3,
                 )
             elif input_type == "color":
                 entry["default_color"] = to_float_list(
-                    modifier.get(item.identifier, getattr(item, "default_value", (0.0, 0.0, 0.0, 1.0))),
+                    get_modifier_input_value(modifier, item.identifier, getattr(item, "default_value", (0.0, 0.0, 0.0, 1.0))),
                     4,
                 )
             elif input_type == "string":
-                entry["default_string"] = str(modifier.get(item.identifier, getattr(item, "default_value", "")))
+                entry["default_string"] = str(get_modifier_input_value(modifier, item.identifier, getattr(item, "default_value", "")))
             elif input_type == "enum":
                 enum_options = self.get_modifier_enum_options(modifier, item.identifier)
                 if not enum_options:
                     continue
 
                 valid_values = {int(option["value"]) for option in enum_options}
-                current_value = int(modifier.get(item.identifier, enum_options[0]["value"]))
+                current_value = self.enum_value_to_int(
+                    enum_options,
+                    get_modifier_input_value(modifier, item.identifier, enum_options[0]["value"]),
+                    int(enum_options[0]["value"]),
+                )
                 if current_value not in valid_values:
                     current_value = int(enum_options[0]["value"])
 
@@ -757,12 +765,47 @@ class BridgeWorker:
         )
 
     def get_modifier_enum_options(self, modifier, identifier: str) -> list[dict[str, object]]:
+        input_entry = get_modifier_input(modifier, identifier)
+        if input_entry is None:
+            return []
+
         try:
-            ui_metadata = modifier.id_properties_ui(identifier).as_dict()
+            value_property = input_entry.bl_rna.properties["value"]
+            raw_items = [
+                (item.identifier, item.name, item.description, item.icon, item.value)
+                for item in value_property.enum_items
+            ]
         except (AttributeError, KeyError, TypeError):
             return []
 
-        return normalize_enum_items(ui_metadata.get("items"))
+        return normalize_enum_items(raw_items)
+
+    def enum_value_to_int(self, enum_options, current_value, fallback: int) -> int:
+        # RNA enum properties report the identifier string; map it back to its int value.
+        if isinstance(current_value, str):
+            for option in enum_options:
+                if current_value == option["id"]:
+                    return int(option["value"])
+            return fallback
+
+        try:
+            return int(current_value)
+        except (TypeError, ValueError):
+            return fallback
+
+    def enum_int_to_assignable(self, modifier, identifier: str, enum_options, int_value: int):
+        input_entry = get_modifier_input(modifier, identifier)
+        try:
+            value_property = input_entry.bl_rna.properties["value"]
+        except (AttributeError, KeyError):
+            return int_value
+
+        if getattr(value_property, "type", "") == "ENUM":
+            for option in enum_options:
+                if int(option["value"]) == int_value:
+                    return str(option["id"])
+
+        return int_value
 
     def coerce_enum_value(self, modifier, identifier: str, raw_value) -> int:
         enum_options = self.get_modifier_enum_options(modifier, identifier)
@@ -802,41 +845,50 @@ class BridgeWorker:
             if identifier not in values:
                 continue
 
-            use_attribute_key = f"{identifier}_use_attribute"
-            attribute_name_key = f"{identifier}_attribute_name"
-            if use_attribute_key in modifier.keys():
-                modifier[use_attribute_key] = False
-            if attribute_name_key in modifier.keys():
-                modifier[attribute_name_key] = ""
+            reset_modifier_input_to_value(modifier, identifier)
 
             if input_type == "float":
-                modifier[identifier] = float(values[identifier])
+                set_modifier_input_value(modifier, identifier, float(values[identifier]))
             elif input_type == "integer":
-                modifier[identifier] = int(values[identifier])
+                set_modifier_input_value(modifier, identifier, int(values[identifier]))
             elif input_type == "boolean":
-                modifier[identifier] = bool(values[identifier])
+                set_modifier_input_value(modifier, identifier, bool(values[identifier]))
             elif input_type == "vector3":
-                existing_value = modifier.get(identifier, None)
+                existing_value = get_modifier_input_value(modifier, identifier)
                 target_length = get_numeric_sequence_length(existing_value) or 3
-                modifier[identifier] = coerce_numeric_sequence(
-                    values[identifier],
-                    target_length,
-                    ("x", "y", "z"),
-                    existing_value,
+                set_modifier_input_value(
+                    modifier,
+                    identifier,
+                    coerce_numeric_sequence(
+                        values[identifier],
+                        target_length,
+                        ("x", "y", "z"),
+                        existing_value,
+                    ),
                 )
             elif input_type == "color":
-                existing_value = modifier.get(identifier, None)
+                existing_value = get_modifier_input_value(modifier, identifier)
                 target_length = get_numeric_sequence_length(existing_value) or 4
-                modifier[identifier] = coerce_numeric_sequence(
-                    values[identifier],
-                    target_length,
-                    ("r", "g", "b", "a"),
-                    existing_value,
+                set_modifier_input_value(
+                    modifier,
+                    identifier,
+                    coerce_numeric_sequence(
+                        values[identifier],
+                        target_length,
+                        ("r", "g", "b", "a"),
+                        existing_value,
+                    ),
                 )
             elif input_type == "string":
-                modifier[identifier] = str(values[identifier])
+                set_modifier_input_value(modifier, identifier, str(values[identifier]))
             elif input_type == "enum":
-                modifier[identifier] = self.coerce_enum_value(modifier, identifier, values[identifier])
+                enum_options = self.get_modifier_enum_options(modifier, identifier)
+                enum_int_value = self.coerce_enum_value(modifier, identifier, values[identifier])
+                set_modifier_input_value(
+                    modifier,
+                    identifier,
+                    self.enum_int_to_assignable(modifier, identifier, enum_options, enum_int_value),
+                )
 
             did_apply_value = True
 

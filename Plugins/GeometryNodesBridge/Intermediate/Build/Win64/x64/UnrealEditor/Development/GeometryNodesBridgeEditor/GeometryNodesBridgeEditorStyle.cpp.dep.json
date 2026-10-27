@@ -1,0 +1,23 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeeditor\\private\\geometrynodesbridgeeditorstyle.cpp",
+        "ProvidedModule": "",
+        "PCH": "z:\\unreal projects\\growth\\growth2\\intermediate\\build\\win64\\x64\\growth2editor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.inclorderunreal5_6.h.pch",
+        "Includes": [
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\geometrynodesbridgeeditor\\definitions.geometrynodesbridgeeditor.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeeditor\\private\\geometrynodesbridgeeditorstyle.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\interfaces\\ipluginmanager.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\plugindescriptor.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\custombuildsteps.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\localizationdescriptor.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\moduledescriptor.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\plugindisalloweddescriptor.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\pluginreferencedescriptor.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\projects\\public\\versescope.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\slatecore\\public\\styling\\slatestylemacros.h"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

@@ -1,0 +1,20 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeruntime\\private\\geometrynodesbridgesource.cpp",
+        "ProvidedModule": "",
+        "PCH": "z:\\unreal projects\\growth\\growth2\\intermediate\\build\\win64\\x64\\growth2editor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.inclorderunreal5_6.h.pch",
+        "Includes": [
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\geometrynodesbridgeruntime\\definitions.geometrynodesbridgeruntime.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeruntime\\public\\geometrynodesbridgesource.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\unrealeditor\\inc\\geometrynodesbridgeruntime\\uht\\geometrynodesbridgesource.generated.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\coreuobject\\public\\uobject\\assetregistrytagscontext.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\coreuobject\\public\\uobject\\cookenums.h",
+            "c:\\egs\\ue_5.8\\engine\\source\\runtime\\engine\\classes\\editorframework\\assetimportdata.h",
+            "c:\\egs\\ue_5.8\\engine\\intermediate\\build\\win64\\unrealeditor\\inc\\engine\\uht\\assetimportdata.generated.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\unrealeditor\\inc\\geometrynodesbridgeruntime\\uht\\geometrynodesbridgesource.gen.cpp"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "Version": "1.2",
+    "Data": {
+        "Source": "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeeditor\\private\\geometrynodesbridgesourcefactory.cpp",
+        "ProvidedModule": "",
+        "PCH": "z:\\unreal projects\\growth\\growth2\\intermediate\\build\\win64\\x64\\growth2editor\\development\\unrealed\\sharedpch.unrealed.project.valapi.valexpapi.cpp20.inclorderunreal5_6.h.pch",
+        "Includes": [
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\x64\\unrealeditor\\development\\geometrynodesbridgeeditor\\definitions.geometrynodesbridgeeditor.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeeditor\\public\\geometrynodesbridgesourcefactory.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\unrealeditor\\inc\\geometrynodesbridgeeditor\\uht\\geometrynodesbridgesourcefactory.generated.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\source\\geometrynodesbridgeruntime\\public\\geometrynodesbridgesource.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\unrealeditor\\inc\\geometrynodesbridgeruntime\\uht\\geometrynodesbridgesource.generated.h",
+            "z:\\unreal projects\\growth\\growth2\\plugins\\geometrynodesbridge\\intermediate\\build\\win64\\unrealeditor\\inc\\geometrynodesbridgeeditor\\uht\\geometrynodesbridgesourcefactory.gen.cpp"
+        ],
+        "ImportedModules": [],
+        "ImportedHeaderUnits": []
+    }
+}

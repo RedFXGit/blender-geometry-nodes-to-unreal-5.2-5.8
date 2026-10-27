@@ -1,0 +1,14 @@
+"Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Source/GeometryNodesBridgeRuntime/Private/GeometryNodesBridgeMoveProbeComponent.cpp"
+@"Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/GeometryNodesBridgeRuntime/GeometryNodesBridgeRuntime.Shared.rsp"
+/FI"Z:/Unreal Projects/Growth/Growth2/Intermediate/Build/Win64/x64/Growth2Editor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.InclOrderUnreal5_6.h"
+/FI"Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/GeometryNodesBridgeRuntime/Definitions.GeometryNodesBridgeRuntime.h"
+/Yu"Z:/Unreal Projects/Growth/Growth2/Intermediate/Build/Win64/x64/Growth2Editor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.InclOrderUnreal5_6.h"
+/Fp"Z:/Unreal Projects/Growth/Growth2/Intermediate/Build/Win64/x64/Growth2Editor/Development/UnrealEd/SharedPCH.UnrealEd.Project.ValApi.ValExpApi.Cpp20.InclOrderUnreal5_6.h.pch"
+/Fo"Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/GeometryNodesBridgeRuntime/GeometryNodesBridgeMoveProbeComponent.cpp.obj"
+/experimental:log "Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/GeometryNodesBridgeRuntime/GeometryNodesBridgeMoveProbeComponent.cpp.sarif"
+/sourceDependencies "Z:/Unreal Projects/Growth/Growth2/Plugins/GeometryNodesBridge/Intermediate/Build/Win64/x64/UnrealEditor/Development/GeometryNodesBridgeRuntime/GeometryNodesBridgeMoveProbeComponent.cpp.dep.json"
+/nologo
+/TP
+/GR-
+/std:c++20
+/wd5054
